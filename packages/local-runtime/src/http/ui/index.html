@@ -38,7 +38,20 @@
       button:hover { border-color: var(--accent); color: var(--accent); }
       button.primary { background: #14406b; border-color: #1f6feb; color: #cfe8ff; }
       button:disabled { opacity: .45; cursor: not-allowed; }
-      main { flex: 1; display: grid; grid-template-columns: 260px 1fr 320px; min-height: 0; }
+      main { flex: 1; display: grid; grid-template-columns: 260px minmax(0, 1fr) 320px; min-height: 0; }
+      /* A split screen is narrow. The side columns give way before the chat
+         does: `minmax(0, 1fr)` keeps the chat from forcing the grid wider
+         than the window. */
+      @media (max-width: 1100px) {
+        main { grid-template-columns: 200px minmax(0, 1fr) 230px; }
+        #chat { padding: 14px 16px; }
+      }
+      @media (max-width: 800px) {
+        main { grid-template-columns: 168px minmax(0, 1fr) 186px; }
+        #chat { padding: 12px; }
+        header { gap: 10px; padding: 8px 10px; }
+        .session .id { font-size: 10px; }
+      }
       /* Every pane scrolls on its own. Without `min-height: 0` the grid row
          would grow to the tallest pane and push the composer off screen. */
       aside, section, #events { overflow: auto; min-height: 0; }
@@ -88,6 +101,38 @@
       .pill { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); }
       .pill.live { color: var(--ok); border-color: #2ea04366; }
       .pill.off { color: var(--err); border-color: #f8514966; }
+      .pill.plan { color: var(--warn); border-color: #e3b34166; }
+      /* The goal and plan panel is an overlay: it needs room for text, and it
+         must never push the chat out of view. */
+      #modal[hidden] { display: none; }
+      #modal {
+        position: fixed; inset: 0; z-index: 20; background: #000a;
+        display: flex; align-items: center; justify-content: center; padding: 24px;
+      }
+      #modal .dialog {
+        width: min(760px, 100%); max-height: 84vh; overflow: auto;
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: 12px; padding: 18px 20px;
+      }
+      #modal .dialog > header { all: unset; display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+      #modal h3 { margin: 0; font-size: 15px; font-weight: 600; }
+      #modal .section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+      #modal .section h4 { margin: 0 0 8px; font-size: 13px; color: var(--accent); }
+      #modal .field { margin: 8px 0; }
+      #modal label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+      #modal textarea, #modal input {
+        width: 100%; background: #0b1017; border: 1px solid var(--line);
+        color: var(--text); border-radius: 8px; padding: 8px 10px; font: inherit;
+      }
+      #modal textarea { min-height: 150px; resize: vertical; }
+      #modal .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+      #modal .kv { font-size: 13px; line-height: 1.7; }
+      #modal .kv b { color: var(--text); font-weight: 600; }
+      #modal .muted { color: var(--muted); font-size: 12px; }
+      #modal ul { margin: 6px 0 0; padding-left: 18px; color: #cfd8e3; }
+      #modal .row-inline { display: flex; gap: 8px; align-items: center; }
+      #modal .row-inline input { width: 140px; }
+      .plan-markdown { max-height: 320px; overflow: auto; background: #0b1017; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; margin: 8px 0; }
     </style>
   </head>
   <body>
@@ -97,6 +142,8 @@
       <span class="spacer"></span>
       <span class="pill" id="conn">连接中</span>
       <span class="pill" id="state">idle</span>
+      <span class="pill plan" id="plan-state" hidden>计划模式</span>
+      <button id="open-panel">目标 / 计划</button>
       <button id="new-session">新建会话</button>
     </header>
 
@@ -122,6 +169,43 @@
     <div id="composer">
       <textarea id="input" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
       <button class="primary" id="send">发送</button>
+    </div>
+
+    <div id="modal" hidden>
+      <div class="dialog">
+        <header>
+          <h3>目标与计划</h3>
+          <span class="spacer"></span>
+          <button id="close-panel">关闭</button>
+        </header>
+
+        <div class="section">
+          <h4>目标</h4>
+          <div id="goal-view" class="kv"><span class="muted">读取中…</span></div>
+          <div class="field">
+            <label for="goal-text">设定目标（识别「目标 / 验收 / 约束 / 边界 / 停止条件」这些标签；缺验收标准时模型会反问你）</label>
+            <textarea id="goal-text" placeholder="目标: …"></textarea>
+          </div>
+          <div class="actions">
+            <button class="primary" id="goal-set">设定目标</button>
+            <div class="row-inline">
+              <label for="goal-budget" style="margin:0">token 预算</label>
+              <input id="goal-budget" type="number" min="1" placeholder="例如 200000" />
+            </div>
+          </div>
+          <div class="actions" id="goal-actions"></div>
+        </div>
+
+        <div class="section">
+          <h4>计划</h4>
+          <div id="plan-view" class="kv"><span class="muted">读取中…</span></div>
+          <div class="actions">
+            <button id="plan-enter">进入计划模式</button>
+            <button id="plan-freeze">冻结草稿并审阅</button>
+          </div>
+          <div id="plan-review"></div>
+        </div>
+      </div>
     </div>
 
     <script>
@@ -214,27 +298,57 @@
         $('chat').scrollTop = $('chat').scrollHeight;
       }
 
+      async function apiOnce(path, options) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), options?.timeoutMs ?? 15000);
+        try {
+          const response = await fetch(path, {
+            ...options,
+            signal: controller.signal,
+            cache: 'no-store',
+            headers: { 'content-type': 'application/json', ...(options?.headers || {}) },
+          });
+          const text = await response.text();
+          let body;
+          if (text) {
+            try {
+              body = JSON.parse(text);
+            } catch {
+              body = undefined;
+            }
+          }
+          if (!response.ok) {
+            const detail = body?.error?.message || body?.message || 'HTTP ' + response.status;
+            const error = new Error(detail);
+            error.status = response.status;
+            throw error;
+          }
+          return { status: response.status, body };
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
+      /**
+       * One request, with a deadline and one retry.
+       *
+       * A request that never answers must not leave the interface waiting for
+       * ever. Only a transport failure is retried: an HTTP answer is an
+       * answer, even when it says "no".
+       */
       async function api(path, options) {
-        const response = await fetch(path, {
-          ...options,
-          headers: { 'content-type': 'application/json', ...(options?.headers || {}) },
-        });
-        const text = await response.text();
-        let body;
-        if (text) {
+        const attempts = options?.attempts ?? 2;
+        let lastError;
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
           try {
-            body = JSON.parse(text);
-          } catch {
-            body = undefined;
+            return await apiOnce(path, options);
+          } catch (error) {
+            lastError = error;
+            if (error.status !== undefined) throw error;
+            if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 300));
           }
         }
-        if (!response.ok) {
-          const detail = body?.error?.message || body?.message || 'HTTP ' + response.status;
-          const error = new Error(detail);
-          error.status = response.status;
-          throw error;
-        }
-        return { status: response.status, body };
+        throw lastError;
       }
 
       async function loadSessions() {
@@ -270,6 +384,234 @@
         // Resume from the current end of the log: replaying from zero would
         // duplicate every past message into the chat.
         connect(id, detail.body?.logOffset || 0);
+        await refreshGoal();
+        await refreshPlan();
+      }
+
+      /* ── 目标与计划面板 ──────────────────────────────── */
+
+      function escapeHtml(text) {
+        return String(text).replace(/[&<>"']/g, (character) => {
+          if (character === '&') return '&amp;';
+          if (character === '<') return '&lt;';
+          if (character === '>') return '&gt;';
+          if (character === '"') return '&quot;';
+          return '&#39;';
+        });
+      }
+
+      function listHtml(items) {
+        if (!Array.isArray(items) || items.length === 0) return '';
+        return '<ul>' + items.map((item) => '<li>' + escapeHtml(item) + '</li>').join('') + '</ul>';
+      }
+
+      async function refreshGoal() {
+        const view = $('goal-view');
+        const actions = $('goal-actions');
+        if (!currentSession) {
+          view.innerHTML = '<span class="muted">先选一个会话。</span>';
+          actions.innerHTML = '';
+          return;
+        }
+        try {
+          const result = await api('/v1/sessions/' + currentSession + '/goal');
+          const goal = result.body?.goal;
+          if (goal === undefined) {
+            view.innerHTML = '<span class="muted">这个会话还没有目标。</span>';
+            actions.innerHTML = '';
+            return;
+          }
+          const budget = goal.budget || {};
+          const limit = budget.tokenLimit === undefined ? '不限' : String(budget.tokenLimit);
+          view.innerHTML =
+            '<div>状态 <b>' + escapeHtml(goal.status) + '</b> · 轮次 <b>' + escapeHtml(goal.rounds) +
+            '</b>（已验证 ' + escapeHtml(goal.verifiedRounds ?? 0) + '）· token <b>' +
+            escapeHtml(budget.tokensUsed ?? 0) + '</b> / ' + escapeHtml(limit) + '</div>' +
+            '<div>目标：<b>' + escapeHtml(goal.objective || '') + '</b></div>' +
+            '<div class="muted">验收标准</div>' + listHtml(goal.acceptanceCriteria) +
+            (goal.constraints?.length ? '<div class="muted">约束</div>' + listHtml(goal.constraints) : '') +
+            (goal.workBoundary?.length ? '<div class="muted">边界</div>' + listHtml(goal.workBoundary) : '') +
+            (goal.stopConditions?.length ? '<div class="muted">停止条件</div>' + listHtml(goal.stopConditions) : '') +
+            (goal.blockedReport === undefined
+              ? ''
+              : '<div class="muted">阻塞报告</div><div>' + escapeHtml(goal.blockedReport.reason || '') + '</div>');
+          actions.innerHTML = '';
+          for (const [label, status] of [
+            ['标记完成', 'completed'],
+            ['标记阻塞', 'blocked'],
+            ['暂停', 'paused'],
+            ['恢复', 'active'],
+            ['清除', 'cleared'],
+          ]) {
+            const button = el('button', '', label);
+            button.onclick = () => setGoalStatus(status);
+            actions.appendChild(button);
+          }
+        } catch (error) {
+          if (error.status === 404) {
+            view.innerHTML = '<span class="muted">这个会话还没有目标。</span>';
+            actions.innerHTML = '';
+            return;
+          }
+          view.innerHTML = '<span class="muted">读取目标失败：' + escapeHtml(error.message) + '</span>';
+        }
+      }
+
+      async function setGoal() {
+        const text = $('goal-text').value.trim();
+        if (text.length === 0) {
+          showBanner('目标文本是空的。');
+          return;
+        }
+        const raw = $('goal-budget').value.trim();
+        const tokenBudget = raw.length > 0 ? Number(raw) : undefined;
+        try {
+          await api('/v1/sessions/' + currentSession + '/goal', {
+            method: 'POST',
+            body: JSON.stringify({
+              text,
+              ...(tokenBudget === undefined ? {} : { tokenBudget }),
+            }),
+          });
+          hideBanner();
+          await refreshGoal();
+        } catch (error) {
+          showBanner('设定目标失败：' + error.message);
+        }
+      }
+
+      async function setGoalStatus(status) {
+        try {
+          await api('/v1/sessions/' + currentSession + '/goal', {
+            method: 'POST',
+            body: JSON.stringify({ status }),
+          });
+          hideBanner();
+          await refreshGoal();
+        } catch (error) {
+          showBanner('修改目标状态失败：' + error.message);
+        }
+      }
+
+      async function refreshPlan() {
+        const view = $('plan-view');
+        const reviewBox = $('plan-review');
+        const pill = $('plan-state');
+        if (!currentSession) {
+          view.innerHTML = '<span class="muted">先选一个会话。</span>';
+          return;
+        }
+        let state;
+        try {
+          const result = await api('/v1/sessions/' + currentSession + '/plan');
+          state = result.body;
+        } catch (error) {
+          view.innerHTML = '<span class="muted">读取计划状态失败：' + escapeHtml(error.message) + '</span>';
+          return;
+        }
+        const review = state?.review;
+        if (state?.mode === 'plan') {
+          pill.hidden = false;
+          pill.textContent = '计划模式';
+          pill.className = 'pill plan';
+        } else {
+          pill.hidden = true;
+        }
+        view.innerHTML =
+          '<div>模式 <b>' + escapeHtml(state?.mode ?? 'default') + '</b>' +
+          (state?.blocked ? ' · <b>有待审阅的计划</b>' : '') + '</div>' +
+          (review === undefined ? '' : '<div>审阅状态 <b>' + escapeHtml(review.state) + '</b></div>');
+        reviewBox.innerHTML = '';
+        if (review !== undefined && review.state === 'pending') {
+          const pre = el('div', 'plan-markdown');
+          pre.textContent = review.markdown ?? '';
+          const feedback = el('input');
+          feedback.placeholder = '驳回时写明原因（可选）';
+          const actions = el('div', 'actions');
+          const approve = el('button', 'primary', '通过');
+          approve.onclick = () => answerPlanReview(review.requestId, 'approve', '');
+          const reject = el('button', '', '驳回');
+          reject.onclick = () => answerPlanReview(review.requestId, 'reject', feedback.value.trim());
+          actions.appendChild(approve);
+          actions.appendChild(reject);
+          reviewBox.appendChild(pre);
+          reviewBox.appendChild(feedback);
+          reviewBox.appendChild(actions);
+        }
+        showPlanCard(state);
+      }
+
+      /**
+       * A pending plan review also shows up in the chat area: the session is
+       * fenced until it is answered, so it must not be possible to miss it.
+       */
+      function showPlanCard(state) {
+        const existing = $('plan-card');
+        if (existing !== null) existing.remove();
+        const review = state?.review;
+        if (review === undefined || review.state !== 'pending') return;
+
+        const card = el('div', 'card');
+        card.id = 'plan-card';
+        card.appendChild(el('h4', null, '计划待审阅：审阅之前不会执行任何操作'));
+        const pre = el('div', 'plan-markdown');
+        pre.textContent = review.markdown ?? '';
+        card.appendChild(pre);
+        const feedback = el('input');
+        feedback.placeholder = '驳回时写明原因（可选）';
+        const actions = el('div', 'actions');
+        const approve = el('button', 'primary', '通过');
+        approve.onclick = () => answerPlanReview(review.requestId, 'approve', '');
+        const reject = el('button', '', '驳回');
+        reject.onclick = () => answerPlanReview(review.requestId, 'reject', feedback.value.trim());
+        actions.appendChild(approve);
+        actions.appendChild(reject);
+        card.appendChild(feedback);
+        card.appendChild(actions);
+        $('cards').appendChild(card);
+      }
+
+      async function answerPlanReview(requestId, decision, feedback) {
+        try {
+          await api('/v1/sessions/' + currentSession + '/plan/review', {
+            method: 'POST',
+            body: JSON.stringify({
+              requestId,
+              decision,
+              ...(feedback.length > 0 ? { feedback } : {}),
+            }),
+          });
+          hideBanner();
+          await refreshPlan();
+        } catch (error) {
+          showBanner('审阅提交失败：' + error.message);
+        }
+      }
+
+      async function enterPlanMode() {
+        try {
+          await api('/v1/sessions/' + currentSession + '/mode', {
+            method: 'POST',
+            body: JSON.stringify({ interactionMode: 'plan' }),
+          });
+          hideBanner();
+          await refreshPlan();
+        } catch (error) {
+          showBanner('进入计划模式失败：' + error.message);
+        }
+      }
+
+      async function freezePlan() {
+        try {
+          await api('/v1/sessions/' + currentSession + '/mode', {
+            method: 'POST',
+            body: JSON.stringify({ interactionMode: 'default' }),
+          });
+          hideBanner();
+          await refreshPlan();
+        } catch (error) {
+          showBanner('冻结计划失败：' + error.message);
+        }
       }
 
       /**
@@ -383,9 +725,20 @@
         }
         if (event.type === 'permission.requested') showApproval(event.approval);
         if (event.type === 'question.requested') showQuestion(event.question);
+        if (event.type === 'goal.updated') {
+          void refreshGoal();
+        }
+        if (event.type === 'plan.mode.changed' || event.type === 'plan.review.requested' || event.type === 'plan.review.resolved') {
+          void refreshPlan();
+        }
         if (event.type === 'session.status') {
           setState(event.status, event.status === 'running');
-          if (event.status === 'completed') syncHistory();
+          if (event.status === 'completed') {
+            syncHistory();
+            // The goal state and the plan review change with the turn.
+            void refreshGoal();
+            void refreshPlan();
+          }
           if (event.status === 'failed') {
             const reason = event.reason || event.error?.message || '未知错误';
             showBanner('本轮失败：' + reason);
@@ -505,6 +858,29 @@
           showBanner('新建会话失败：' + error.message);
         }
       };
+      function openPanel() {
+        $('modal').hidden = false;
+        void refreshGoal();
+        void refreshPlan();
+      }
+
+      $('open-panel').onclick = () => {
+        openPanel();
+      };
+      $('close-panel').onclick = () => {
+        $('modal').hidden = true;
+      };
+      $('modal').onclick = (event) => {
+        if (event.target === $('modal')) $('modal').hidden = true;
+      };
+      $('goal-set').onclick = () => void setGoal();
+      $('plan-enter').onclick = () => void enterPlanMode();
+      $('plan-freeze').onclick = () => void freezePlan();
+      // Leaving the page releases the event stream right away instead of
+      // waiting for the browser to drop the connection.
+      window.addEventListener('pagehide', () => {
+        if (streamAbort) streamAbort.abort();
+      });
 
       (async () => {
         try {
@@ -513,6 +889,8 @@
           const list = await loadSessions();
           if (list.length > 0) await selectSession(list[0].id);
           else setConnection('已连接', true);
+          // A deep link opens the panel right away: ?panel=goal or ?panel=plan
+          if (new URLSearchParams(location.search).has('panel')) openPanel();
         } catch (error) {
           showBanner('无法连接运行时：' + error.message);
         }

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,13 +20,23 @@ function pagePath(): string | undefined {
   return candidates.find((candidate) => existsSync(candidate));
 }
 
-let cached: string | undefined;
+let cached: { readonly mtimeMs: number; readonly html: string } | undefined;
 
-/** The HTML of the console. */
+/**
+ * The HTML of the console.
+ *
+ * The file is read once and then cached by its modification time: a running
+ * runtime must pick up an edited page without a restart, and the page is
+ * read often enough that re-reading it every time would be wasteful.
+ */
 export function consoleHtml(): string | undefined {
-  if (cached !== undefined) return cached;
   const path = pagePath();
   if (path === undefined) return undefined;
-  cached = readFileSync(path, 'utf8');
-  return cached;
+
+  const mtimeMs = statSync(path).mtimeMs;
+  if (cached !== undefined && cached.mtimeMs === mtimeMs) return cached.html;
+
+  const html = readFileSync(path, 'utf8');
+  cached = { mtimeMs, html };
+  return html;
 }

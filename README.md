@@ -75,6 +75,7 @@ Dependency direction is single-direction and machine-checked
 | [`docs/state-ownership.md`](docs/state-ownership.md) | Which module owns which fact, on-disk layout, atomic writes, locking, crash recovery |
 | [`docs/decisions.md`](docs/decisions.md) | Every design decision with alternatives, rationale and how to undo it |
 | [`docs/provenance.md`](docs/provenance.md) | Per-spec provenance: public MIT repo, official docs, this task's spec, or independent design |
+| [`docs/goal-template-continuous-development.md`](docs/goal-template-continuous-development.md) | How to write a goal-mode goal, plus a ready-to-use template for continuous development |
 
 ---
 
@@ -106,6 +107,7 @@ node packages/cli/dist/index.js sessions
 # 5c. or drive the same runtime from the browser console
 open http://127.0.0.1:8787/
 #   zero-dependency static page: sessions, chat, live event stream, approvals
+#   ?panel=goal opens the goal and plan panel right away
 
 # 6. configure a provider: the file holds the variable NAME, the key stays
 #    in the environment

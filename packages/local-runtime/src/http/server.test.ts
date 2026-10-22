@@ -79,6 +79,18 @@ describe('runtime server', () => {
     expect(body.error.code).toBe('METHOD_NOT_ALLOWED');
   });
 
+  it('serves the web console at the root path', async () => {
+    const port = await start();
+    const response = await fetch(`http://127.0.0.1:${port}/`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+
+    const body = await response.text();
+    expect(body).toContain('Local Agent Runtime');
+    // The console drives the goal and the plan mode as well.
+    expect(body).toContain('目标 / 计划');
+  });
+
   it('binds to the loopback interface only', async () => {
     const port = await start();
     const address = server?.httpPort;
