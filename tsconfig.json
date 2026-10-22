@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/protocol" },
+    { "path": "packages/agent-core" },
+    { "path": "packages/agent-tools" },
+    { "path": "packages/agent-extension" },
+    { "path": "packages/local-runtime" },
+    { "path": "packages/local-runtime-v2" },
+    { "path": "packages/cli" }
+  ]
+}

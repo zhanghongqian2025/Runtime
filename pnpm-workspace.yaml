@@ -1,0 +1,12 @@
+packages:
+  - 'packages/protocol'
+  - 'packages/agent-core'
+  - 'packages/agent-tools'
+  - 'packages/agent-extension'
+  - 'packages/local-runtime'
+  - 'packages/local-runtime-v2'
+  - 'packages/cli'
+
+# esbuild ships a platform binary via its install script; vitest needs it.
+allowBuilds:
+  esbuild: true

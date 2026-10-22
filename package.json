@@ -1,0 +1,39 @@
+{
+  "name": "local-agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A fully local, open-source coding agent runtime (MIT).",
+  "license": "MIT",
+  "packageManager": "pnpm@12.14.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json --pretty && tsc -p e2e/tsconfig.json --pretty",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "check:deps": "node scripts/check-deps.mjs",
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "verify": "pnpm lint && pnpm check:deps && pnpm typecheck && pnpm test && pnpm build && pnpm check:transport",
+    "check:transport": "node e2e/real-transport.check.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.37.0",
+    "@local-agent/agent-core": "workspace:*",
+    "@local-agent/agent-extension": "workspace:*",
+    "@local-agent/agent-tools": "workspace:*",
+    "@local-agent/cli": "workspace:*",
+    "@local-agent/local-runtime": "workspace:*",
+    "@local-agent/local-runtime-v2": "workspace:*",
+    "@local-agent/protocol": "workspace:*",
+    "@types/node": "^22.18.0",
+    "eslint": "^9.37.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.0"
+  }
+}

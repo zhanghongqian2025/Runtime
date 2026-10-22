@@ -1,0 +1,36 @@
+{
+  "name": "@local-agent/local-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Host runtime: HTTP server, session storage, permission core, event bus, configuration.",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@local-agent/protocol": "workspace:*",
+    "@local-agent/agent-core": "workspace:*",
+    "@local-agent/agent-tools": "workspace:*",
+    "zod": "^3.25.0",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "@local-agent/agent-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure agent loop core: turn runner, tool protocol layer, event bridge.",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "import": "./dist/tools/index.js"
+    },
+    "./event-bridge": {
+      "types": "./dist/event-bridge/index.d.ts",
+      "import": "./dist/event-bridge/index.js"
+    },
+    "./pi-turn-runner": {
+      "types": "./dist/pi-turn-runner/index.d.ts",
+      "import": "./dist/pi-turn-runner/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@local-agent/protocol": "workspace:*",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
