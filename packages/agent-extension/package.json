@@ -1,0 +1,38 @@
+{
+  "name": "@local-agent/agent-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Optional runtime extensions; ships the plan-mode extension.",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./plan-mode": {
+      "types": "./dist/plan-mode.d.ts",
+      "import": "./dist/plan-mode.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@local-agent/protocol": "workspace:*",
+    "@local-agent/agent-core": "workspace:*",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
