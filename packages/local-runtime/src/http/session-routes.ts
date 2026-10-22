@@ -76,7 +76,9 @@ export function registerSessionRoutes(router: Router, deps: SessionRouteDependen
       sendError(response, 404, 'NOT_FOUND', 'no session matches this id');
       return;
     }
-    sendJson(response, 200, { session });
+    // The log offset lets a client resume the event stream where the log
+    // currently ends instead of replaying every past event.
+    sendJson(response, 200, { session, logOffset: events.latestOffset(session.id) });
   });
 
   router.get('/v1/sessions/:sessionId/status', ({ response, params }) => {
@@ -331,6 +333,10 @@ export function registerSessionRoutes(router: Router, deps: SessionRouteDependen
       // already closed.
       connection: 'close',
     });
+    // Send the headers right away. Without this the client cannot tell that
+    // the stream is open until the first event arrives, and a client that
+    // waits for the response to start reading would wait forever.
+    response.flushHeaders();
 
     let lastSent = after;
 

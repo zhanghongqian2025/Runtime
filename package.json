@@ -10,7 +10,7 @@
     "node": ">=22.19.0"
   },
   "scripts": {
-    "build": "tsc -b tsconfig.json",
+    "build": "tsc -b tsconfig.json && node scripts/copy-ui.mjs",
     "typecheck": "tsc -b tsconfig.json --pretty && tsc -p e2e/tsconfig.json --pretty",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -55,11 +55,22 @@ export async function* parseOpenAiStream(
   data: AsyncIterable<string>,
 ): AsyncGenerator<ProviderStreamChunk> {
   const toolCalls = new Map<number, { id: string; name: string; args: string }>();
+  // A completion without any content is an anomaly, not an empty answer.
+  let produced = false;
+
+  const assertProduced = (): void => {
+    if (produced) return;
+    throw new ProviderError(
+      'empty-response',
+      'the provider returned a completion without any content',
+    );
+  };
 
   function* flushToolCalls(): Generator<ProviderStreamChunk> {
     const ordered = [...toolCalls.entries()].sort((left, right) => left[0] - right[0]);
     for (const [, call] of ordered) {
       if (call.name.length === 0) continue;
+      produced = true;
       yield {
         kind: 'tool_call',
         toolCallId: call.id,
@@ -73,6 +84,7 @@ export async function* parseOpenAiStream(
   for await (const payload of data) {
     if (payload === '[DONE]') {
       yield* flushToolCalls();
+      assertProduced();
       yield { kind: 'done' };
       return;
     }
@@ -93,9 +105,11 @@ export async function* parseOpenAiStream(
     const delta = choice?.delta;
 
     if (delta?.content !== undefined && delta.content.length > 0) {
+      produced = true;
       yield { kind: 'text', text: delta.content };
     }
     if (delta?.reasoning_content !== undefined && delta.reasoning_content.length > 0) {
+      produced = true;
       yield { kind: 'thinking', text: delta.reasoning_content };
     }
 
@@ -120,6 +134,7 @@ export async function* parseOpenAiStream(
   }
 
   yield* flushToolCalls();
+  assertProduced();
   yield { kind: 'done' };
 }
 

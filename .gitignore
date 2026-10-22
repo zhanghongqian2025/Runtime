@@ -11,7 +11,9 @@ config.yaml
 config.local.yaml
 
 # Local runtime data
-sessions/
+# Anchored to the repository root: a bare `sessions/` would also swallow
+# packages/local-runtime/src/sessions, which is source code.
+/sessions/
 *.log
 .runtime/
 

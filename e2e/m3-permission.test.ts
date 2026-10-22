@@ -122,7 +122,7 @@ describe('end-to-end permissions', () => {
       defaultCwd: workspace,
       dataDir: mkdtempSync(join(tmpdir(), 'local-agent-e2e-')),
     });
-    const port = await server.listen();
+    const port = await server.listen(0);
     return { baseUrl: `http://127.0.0.1:${port}`, workspace };
   };
 

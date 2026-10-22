@@ -19,6 +19,7 @@ import { createRouter, type Router } from './router.js';
 import { sendError } from './respond.js';
 import { registerRuntimeRoutes } from './routes.js';
 import { registerSessionRoutes } from './session-routes.js';
+import { consoleHtml } from './ui.js';
 import type { SessionStore } from '../sessions/types.js';
 import type { EventDelivery } from '../events/types.js';
 import type { TurnSystem } from '../turns/turn-system.js';
@@ -68,7 +69,7 @@ export interface RuntimeServer {
   setExtraRoutes(register: (router: Router, services: RuntimeServices) => void): void;
   /** Add tools to the sessions. Call before `listen`. */
   setExtraTools(tools: readonly ToolImpl[]): void;
-  listen(): Promise<number>;
+  listen(port?: number): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -100,6 +101,7 @@ export function createRuntimeServer(options: RuntimeServerOptions): RuntimeServe
       repairedFiles: recovery.repairedFiles,
       rolledBackTransactions: recovery.rolledBackTransactions,
       interruptedTurns: recovery.interruptedTurns,
+      repairedToolCalls: recovery.repairedToolCalls,
     });
   }
 
@@ -133,6 +135,21 @@ export function createRuntimeServer(options: RuntimeServerOptions): RuntimeServe
   });
 
   const router: Router = createRouter();
+
+  // The web console: a single static page, no framework.
+  router.get('/', ({ response }) => {
+    const html = consoleHtml();
+    if (html === undefined) {
+      sendError(response, 404, 'NOT_FOUND', 'the web console is not bundled in this build');
+      return;
+    }
+    response.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+    });
+    response.end(html);
+  });
+
   registerRuntimeRoutes(router, { config: options.config, startedAt, now });
   registerSessionRoutes(router, {
     sessions,
@@ -197,22 +214,27 @@ export function createRuntimeServer(options: RuntimeServerOptions): RuntimeServe
     get httpPort(): number {
       return boundPort;
     },
-    async listen(): Promise<number> {
+    async listen(port?: number): Promise<number> {
       if (server) return boundPort;
       server = createServer((request, response) => {
         void handleRequest(request, response);
       });
 
+      // `port` overrides the configured port. Tests pass 0 to get a free
+      // port from the operating system: a fixed port would make the suite
+      // fail whenever the runtime happens to run locally.
+      const wanted = port ?? options.config.config.httpPort;
+
       await new Promise<void>((resolve, reject) => {
         server?.once('error', reject);
-        server?.listen(options.config.config.httpPort, options.config.config.host, () => {
+        server?.listen(wanted, options.config.config.host, () => {
           server?.removeListener('error', reject);
           resolve();
         });
       });
 
       const address = server.address();
-      boundPort = typeof address === 'object' && address !== null ? address.port : options.config.config.httpPort;
+      boundPort = typeof address === 'object' && address !== null ? address.port : wanted;
 
       if (writeRuntimeFile) {
         const filePath = runtimeFilePath(env);

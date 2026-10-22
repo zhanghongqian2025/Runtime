@@ -68,7 +68,7 @@ describe('end-to-end plan mode', () => {
       dataDir,
     });
 
-    const port = await application.listen();
+    const port = await application.listen(0);
     const baseUrl = `http://127.0.0.1:${port}`;
 
     const created = await fetch(`${baseUrl}/v1/sessions`, {

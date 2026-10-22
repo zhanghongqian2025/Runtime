@@ -24,7 +24,7 @@ describe('runtime server', () => {
       env: {},
       dataDir: mkdtempSync(join(tmpdir(), 'local-agent-server-')),
     });
-    return server.listen();
+    return server.listen(0);
   };
 
   it('answers /health', async () => {

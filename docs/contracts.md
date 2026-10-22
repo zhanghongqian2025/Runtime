@@ -261,6 +261,8 @@ export type AfterToolCallDecision =
 
 - `block`：**只阻断 + 标注 `blockedBy`**，不执行工具、不产生副作用。
 - 被阻断的 tool call 以**只读**数组 `blockedToolCalls` 传给 `onStepEndHook`（不含任何可执行引用）。
+- **被阻断的调用同样要写回结果**：历史里会追加一条 `role:'tool'` 的消息，内容是 `isError: true` 的 `tool_result`，正文说明被谁、因为什么拦下。少了这条，`tool_use` 就没有配对的 `tool_result`，历史畸形，上游可能回一条**空内容**的流（见 §7.3）。
+- **被阻断的调用也要再问模型一次**：阻断后循环继续，让模型知道这次调用没跑成并给出回应；否则一轮会以"只有工具调用、没有回答"结束。循环仍受 §3.6 的 step 上限保护。
 - 权限层**不得**直接执行工具；它只提供判定（§5）。
 
 ### 3.5 `onStepEndHook`（boundary）
@@ -597,7 +599,7 @@ providers:
 | GET | `/v1/config` | 运行时配置（**已脱敏**：只返回 env 变量名，不返回值） |
 | POST | `/v1/sessions` | 创建会话 → `{ session }` |
 | GET | `/v1/sessions?limit&cursor` | 列出会话（不含历史正文） |
-| GET | `/v1/sessions/{id}` | 会话元数据 |
+| GET | `/v1/sessions/{id}` | 会话元数据 + `logOffset`（当前事件日志末尾位置，用于续传） |
 | GET | `/v1/sessions/{id}/status` | 运行状态（running/queued/awaiting_approval/…） |
 | DELETE | `/v1/sessions/{id}` | 删除会话（需 `?force=true` 才有子会话） |
 | POST | `/v1/sessions/{id}/fork` | `{ fromMessageId? \| fromTurnIndex? }` → 新 sessionId |
@@ -665,6 +667,27 @@ COMMIT (journal 中标记 commit)
 
 任一步失败 → **回滚**（恢复旧值、删除已写文件、释放已受理的 turn），并向客户端返回结构化错误。**不允许半状态。**
 
+### 6.6 崩溃恢复与历史修复
+
+进程重启时 `recoverSessions` 修三件事，报告字段为 `{ sessions, repairedFiles, rolledBackTransactions, interruptedTurns, repairedToolCalls }`：
+
+1. **半行文件**：丢掉崩溃留下的半行，原子重写；
+2. **未提交事务**：按 journal 回滚；
+3. **仍在运行的轮次**：标记为 `interrupted`，**不自动续跑**（D-029）。
+
+除此之外还要修**历史畸形**：被中断的轮次会留下一条没有 `tool_result` 的 `tool_use`。恢复时在**紧挨着那条消息**的位置补一条 `role:'tool'` 的消息，内容是 `isError: true` 的 `tool_result`（正文说明这次调用被中断）。不补的话，这个会话之后的每次请求都可能拿到**空内容**的回复（见 §7.3），而会话看起来还是健康的。
+
+> 恢复只补**整个历史里都没有结果**的调用。已经在别处补过结果的调用不会被重复补写。
+
+### 6.7 Web 控制台
+
+`GET /` 返回一个**零依赖**的静态页面（单文件 HTML + 原生 JS/CSS，无框架、无构建），它只是同一套 HTTP API 的一个客户端：CLI 能做的事它都能做。
+
+- **布局**：三栏（会话 / 对话 / 实时事件流）+ 底部输入框。每个面板**自己滚动**，页面本身不滚动——审批卡必须**始终可见**，不能被长对话推到折叠线以下。
+- **审批卡在对话区之外**：待审批与待回答的卡片放在输入框**上方**的独立容器里。重建对话区（`session.status` 收尾时同步历史）**不得**销毁它们，否则用户永远等不到那个"批准"按钮。
+- **失败可见**：非 2xx 响应必须显式报错（横幅），并把消息文本还给用户；不允许"看起来发出去了但其实没发"。
+- **事件流从末尾续传**：先用 `GET /v1/sessions/{id}` 拿到 `logOffset`，再从该位置订阅 SSE，避免把历史事件重复渲染进对话区。断线自动重连（退避），并在标题栏显示连接状态。
+
 ---
 
 ## 7. Provider 契约（`packages/local-runtime/src/providers`）
@@ -731,7 +754,15 @@ export interface ModelConfig {
 | bad request | ❌ | HTTP 400 / 422 |
 | 内容过滤 | ❌ | body 命中 `content_filter` / `safety` |
 | 通用 5xx | ❌ | HTTP 500/502/503/504（**529 除外**） |
+| 空回复 | ❌ | 流正常结束但**没有任何内容块**（见下方说明） |
 | 未知失败 | ❌ | 其他 |
+
+> **空回复（`empty-response`）**：部分上游对**畸形历史**（例如缺少 `tool_result` 的 `tool_use`）不报错，而是返回 `200` + 一条**没有任何内容块**的流。这种"成功"必须被当成失败：否则一轮看起来正常结束，用户却什么也没得到。判定点在 provider 适配器里——**纯工具调用**（没有文字）**不算**空回复。
+
+> **畸形历史的下游后果**：上游对畸形历史静默返回空内容的概率很高，所以运行时必须保证**每个 `tool_use` 都有对应的 `tool_result`**：
+> - 工具被**执行** → 正常写入结果；
+> - 工具被**拦截或拒绝** → 写入 `isError: true` 的结果，内容说明被拦截（见 §3.4）；
+> - 回合被**中断**（进程被杀、审批未答复）→ 崩溃恢复时补写 `isError: true` 的结果（见 §6.6）。
 
 ### 7.4 重试预算
 

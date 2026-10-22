@@ -20,6 +20,7 @@ export const PROVIDER_ERROR_KINDS = [
   'bad-request',
   'content-filter',
   'server-error',
+  'empty-response',
   'unknown',
 ] as const;
 
@@ -32,7 +33,6 @@ const RETRYABLE_KINDS: ReadonlySet<ProviderErrorKind> = new Set<ProviderErrorKin
   'rate-limit',
   'overloaded',
 ]);
-
 export function isRetryableKind(kind: ProviderErrorKind): boolean {
   return RETRYABLE_KINDS.has(kind);
 }

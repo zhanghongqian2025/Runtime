@@ -154,7 +154,7 @@ describe('end-to-end resume after a restart', () => {
       dataDir,
       defaultCwd: workspace,
     });
-    const firstPort = await server.listen();
+    const firstPort = await server.listen(0);
     const firstUrl = `http://127.0.0.1:${firstPort}`;
 
     const created = await fetchResilient(`${firstUrl}/v1/sessions`, {
@@ -191,7 +191,7 @@ describe('end-to-end resume after a restart', () => {
       dataDir,
       defaultCwd: workspace,
     });
-    const secondPort = await server.listen();
+    const secondPort = await server.listen(0);
     const secondUrl = `http://127.0.0.1:${secondPort}`;
 
     // The session survived the restart.
@@ -252,7 +252,7 @@ describe('end-to-end resume after a restart', () => {
       dataDir,
       defaultCwd: workspace,
     });
-    const port = await server.listen();
+    const port = await server.listen(0);
     const baseUrl = `http://127.0.0.1:${port}`;
 
     const created = await fetchResilient(`${baseUrl}/v1/sessions`, {
@@ -324,7 +324,7 @@ describe('end-to-end resume after a restart', () => {
       env: {},
       dataDir,
     });
-    const port = await server.listen();
+    const port = await server.listen(0);
     const baseUrl = `http://127.0.0.1:${port}`;
 
     const created = await fetchResilient(`${baseUrl}/v1/sessions`, {

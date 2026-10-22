@@ -115,7 +115,7 @@ describe('end-to-end turn', () => {
       env: {},
       dataDir: mkdtempSync(join(tmpdir(), 'local-agent-e2e-')),
     });
-    const port = await server.listen();
+    const port = await server.listen(0);
     return `http://127.0.0.1:${port}`;
   };
 

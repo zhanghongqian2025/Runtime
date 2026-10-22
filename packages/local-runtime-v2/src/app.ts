@@ -45,7 +45,7 @@ export interface Application {
   readonly services: RuntimeServices;
   readonly plan: PlanService;
   readonly goal: GoalService;
-  listen(): Promise<number>;
+  listen(port?: number): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -151,8 +151,8 @@ export function createApplication(options: ApplicationOptions): Application {
     services: server.services,
     plan,
     goal,
-    async listen(): Promise<number> {
-      return server.listen();
+    async listen(port?: number): Promise<number> {
+      return server.listen(port);
     },
     async close(): Promise<void> {
       await server.close();

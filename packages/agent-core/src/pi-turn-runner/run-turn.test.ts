@@ -255,14 +255,23 @@ describe('runTurn', () => {
       bind: () => [],
     };
 
-    const toolStream: StreamFn = async function* (): AsyncGenerator<ProviderStreamChunk> {
-      yield { kind: 'tool_call', toolCallId: 'tool_1', name: 'echo', input: { text: 'hi' } };
+    // The model is called again after the block, so the second answer is text:
+    // a model that keeps asking for the same blocked call must not loop.
+    let providerCalls = 0;
+    const answeringStream: StreamFn = async function* (): AsyncGenerator<ProviderStreamChunk> {
+      providerCalls += 1;
+      if (providerCalls === 1) {
+        yield { kind: 'tool_call', toolCallId: 'tool_1', name: 'echo', input: { text: 'hi' } };
+        yield { kind: 'done' };
+        return;
+      }
+      yield { kind: 'text', text: 'the call was not allowed' };
       yield { kind: 'done' };
     };
 
     const blocked: string[] = [];
     const run = harness({
-      stream: toolStream,
+      stream: answeringStream,
       tools: binder,
       hooks: {
         beforeToolCall: [
@@ -282,5 +291,61 @@ describe('runTurn', () => {
     expect(executed).toBe(0);
     expect(blocked).toEqual(['echo:permission']);
     expect(typesOf(run)).toContain('tool.call.blocked');
+  });
+
+  it('answers a blocked tool call so the history stays well formed', async () => {
+    const tool: ToolImpl = {
+      definition: {
+        name: 'echo',
+        description: 'echo the input',
+        schema: z.object({ text: z.string() }),
+        executionMode: 'sync',
+      },
+      execute: async () => {
+        throw new Error('the tool must not run');
+      },
+    };
+
+    const binder: ToolBinder = {
+      resolve: (name) => (name === 'echo' ? tool : undefined),
+      list: () => [{ definition: tool.definition, runtime: 'local', enabled: true }],
+      bind: () => [],
+    };
+
+    let providerCalls = 0;
+    const stream: StreamFn = async function* (): AsyncGenerator<ProviderStreamChunk> {
+      providerCalls += 1;
+      if (providerCalls === 1) {
+        yield { kind: 'tool_call', toolCallId: 'tool_1', name: 'echo', input: { text: 'hi' } };
+        yield { kind: 'done' };
+        return;
+      }
+      yield { kind: 'text', text: 'understood' };
+      yield { kind: 'done' };
+    };
+
+    const run = harness({
+      stream,
+      tools: binder,
+      hooks: {
+        beforeToolCall: [
+          () => ({ kind: 'block', reason: 'not allowed', blockedBy: 'permission' }),
+        ],
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // A tool call without a result makes the history malformed, and a
+    // provider may answer a malformed history with an empty completion.
+    const results = run.history.filter((message) => message.role === 'tool');
+    expect(results).toHaveLength(1);
+    const block = results[0]?.content[0];
+    expect(block?.type).toBe('tool_result');
+    if (block?.type !== 'tool_result') throw new Error('unreachable');
+    expect(block.toolCallId).toBe('tool_1');
+    expect(block.isError).toBe(true);
+
+    // The model gets to react to the denial.
+    expect(run.calls()).toBe(2);
   });
 });

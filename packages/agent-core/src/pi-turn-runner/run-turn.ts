@@ -343,6 +343,25 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
           blockedBy: block.by,
           reason: block.reason,
         });
+        // A blocked call still has to be answered. A tool call without a
+        // result leaves the history malformed, and a provider may answer a
+        // malformed history with an empty completion.
+        messages.push({
+          id: newId('message'),
+          role: 'tool',
+          content: [
+            {
+              type: 'tool_result',
+              toolCallId: intent.toolCallId,
+              content: [
+                { type: 'text', text: `the tool call was blocked (${block.by}): ${block.reason}` },
+              ],
+              isError: true,
+            },
+          ],
+          createdAt: new Date().toISOString(),
+          meta: { turnId: input.turnId, stepIndex },
+        });
         continue;
       }
 
@@ -703,8 +722,12 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
       await runStepEnd(toolOutcome.completed, toolOutcome.blocked);
 
       // Another step runs when the model has to react to tool results, or
-      // when a hook queued internal work.
-      continueLoop = toolOutcome.completed.length > 0 || followUps.length > 0;
+      // when a hook queued internal work. A blocked call counts: the model
+      // has to be told that the call did not run.
+      continueLoop =
+        toolOutcome.completed.length > 0 ||
+        toolOutcome.blocked.length > 0 ||
+        followUps.length > 0;
       followUps.length = 0;
     }
 

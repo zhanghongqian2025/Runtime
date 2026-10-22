@@ -59,6 +59,18 @@ export async function* parseAnthropicStream(
   const toolCalls = new Map<number, { id: string; name: string; json: string }>();
   let inputTokens = 0;
   let outputTokens = 0;
+  // A completion without any content is an anomaly, not an empty answer. Some
+  // providers answer a malformed request with an empty stream instead of an
+  // error, and a silent no-op is worse than a loud failure.
+  let produced = false;
+
+  const assertProduced = (): void => {
+    if (produced) return;
+    throw new ProviderError(
+      'empty-response',
+      'the provider returned a completion without any content',
+    );
+  };
 
   for await (const payload of data) {
     let parsed: AnthropicStreamEvent;
@@ -91,9 +103,11 @@ export async function* parseAnthropicStream(
       case 'content_block_delta': {
         const delta = parsed.delta;
         if (delta?.type === 'text_delta' && delta.text !== undefined) {
+          produced = true;
           yield { kind: 'text', text: delta.text };
         }
         if (delta?.type === 'thinking_delta' && delta.thinking !== undefined) {
+          produced = true;
           yield { kind: 'thinking', text: delta.thinking };
         }
         if (delta?.type === 'input_json_delta' && delta.partial_json !== undefined) {
@@ -109,6 +123,7 @@ export async function* parseAnthropicStream(
         const index = parsed.index ?? 0;
         const existing = toolCalls.get(index);
         if (existing) {
+          produced = true;
           yield {
             kind: 'tool_call',
             toolCallId: existing.id,
@@ -130,6 +145,7 @@ export async function* parseAnthropicStream(
       case 'message_stop': {
         for (const [, call] of [...toolCalls.entries()].sort((a, b) => a[0] - b[0])) {
           if (call.name.length === 0) continue;
+          produced = true;
           yield {
             kind: 'tool_call',
             toolCallId: call.id,
@@ -138,6 +154,7 @@ export async function* parseAnthropicStream(
           };
         }
         toolCalls.clear();
+        assertProduced();
         yield {
           kind: 'usage',
           usage: { inputTokens, outputTokens },
@@ -153,6 +170,7 @@ export async function* parseAnthropicStream(
 
   for (const [, call] of [...toolCalls.entries()].sort((a, b) => a[0] - b[0])) {
     if (call.name.length === 0) continue;
+    produced = true;
     yield {
       kind: 'tool_call',
       toolCallId: call.id,
@@ -161,6 +179,7 @@ export async function* parseAnthropicStream(
     };
   }
   toolCalls.clear();
+  assertProduced();
   yield { kind: 'usage', usage: { inputTokens, outputTokens } };
   yield { kind: 'done' };
 }
@@ -202,11 +221,26 @@ export function createAnthropicMessagesAdapter(options: AnthropicMessagesOptions
 
       const attemptStream = async function* (): AsyncGenerator<ProviderStreamChunk> {
         const payload = toAnthropicPayload(request.messages);
+        const thinking =
+          request.thinking?.enabled === true
+            ? {
+                type: 'enabled',
+                budget_tokens: Math.max(
+                  1024,
+                  Math.min(
+                    request.thinking.budgetTokens ?? 4096,
+                    Math.max(1024, request.maxOutputTokens - 1024),
+                  ),
+                ),
+              }
+            : undefined;
+
         const body = JSON.stringify({
           model: request.model,
           max_tokens: request.maxOutputTokens,
           messages: payload.messages,
           ...(payload.system !== undefined ? { system: payload.system } : {}),
+          ...(thinking === undefined ? {} : { thinking }),
           stream: true,
           ...(request.tools.length > 0
             ? {
@@ -224,7 +258,10 @@ export function createAnthropicMessagesAdapter(options: AnthropicMessagesOptions
           headers: {
             'content-type': 'application/json',
             accept: 'text/event-stream',
+            // MiniMax accepts either convention; sending both is harmless and
+            // covers gateways that only look at one of them.
             'x-api-key': adapterOptions.apiKey,
+            authorization: `Bearer ${adapterOptions.apiKey}`,
             'anthropic-version': adapterOptions.anthropicVersion ?? '2023-06-01',
             ...(adapterOptions.extraHeaders ?? {}),
           },

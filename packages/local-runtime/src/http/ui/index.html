@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local Agent Runtime</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --panel: #131a23;
+        --line: #243040;
+        --text: #d6deeb;
+        --muted: #7d8da3;
+        --accent: #4cc2ff;
+        --ok: #56d364;
+        --warn: #e3b341;
+        --err: #f85149;
+        --user: #1f6feb33;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--text);
+        font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+      }
+      header {
+        display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+        border-bottom: 1px solid var(--line); background: var(--panel); flex: none;
+      }
+      header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+      header .meta { color: var(--muted); font-size: 12px; }
+      header .spacer { flex: 1; }
+      button {
+        font: inherit; color: var(--text); background: #1b2431; border: 1px solid var(--line);
+        border-radius: 6px; padding: 5px 11px; cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); color: var(--accent); }
+      button.primary { background: #14406b; border-color: #1f6feb; color: #cfe8ff; }
+      button:disabled { opacity: .45; cursor: not-allowed; }
+      main { flex: 1; display: grid; grid-template-columns: 260px 1fr 320px; min-height: 0; }
+      /* Every pane scrolls on its own. Without `min-height: 0` the grid row
+         would grow to the tallest pane and push the composer off screen. */
+      aside, section, #events { overflow: auto; min-height: 0; }
+      aside { border-right: 1px solid var(--line); background: var(--panel); padding: 10px; }
+      #events { border-left: 1px solid var(--line); background: var(--panel); padding: 10px; }
+      .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .8px; margin: 4px 2px 8px; }
+      .session {
+        padding: 8px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 4px;
+        border: 1px solid transparent; font-size: 13px;
+      }
+      .session:hover { background: #182130; }
+      .session.active { background: #14263a; border-color: #1f6feb; }
+      .session .id { color: var(--muted); font-size: 11px; font-family: ui-monospace, monospace; }
+      #chat { padding: 18px 22px; }
+      .msg { margin-bottom: 16px; }
+      .msg .who { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+      .bubble { padding: 10px 13px; border-radius: 9px; white-space: pre-wrap; word-break: break-word; }
+      .msg.user .bubble { background: var(--user); border: 1px solid #1f6feb55; }
+      .msg.assistant .bubble { background: var(--panel); border: 1px solid var(--line); }
+      .msg.tool .bubble { background: #0f1a14; border: 1px solid #2ea04355; font-family: ui-monospace, monospace; font-size: 12px; }
+      .msg.thinking .bubble { color: #b6c2d1; font-style: italic; border-left: 2px solid var(--warn); }
+      /* Pending approvals and questions live outside the chat. Re-rendering the
+         chat must never be able to destroy a card the user still has to act on. */
+      #cards { flex: none; max-height: 40vh; overflow: auto; padding: 0 16px; }
+      #cards:empty { padding: 0; }
+      .card { margin: 10px 0; padding: 12px 14px; border-radius: 9px; border: 1px solid var(--warn); background: #1d1a0d; }
+      .card h4 { margin: 0 0 6px; font-size: 13px; color: var(--warn); }
+      .card pre { margin: 6px 0 10px; font-size: 12px; color: #cfd8e3; white-space: pre-wrap; }
+      .card .actions { display: flex; gap: 8px; }
+      #banner { flex: none; margin: 0 16px 8px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--err); background: #2a1414; color: #ffb4ae; font-size: 13px; }
+      #banner[hidden] { display: none; }
+      #composer { flex: none; border-top: 1px solid var(--line); background: var(--panel); padding: 10px 16px; display: flex; gap: 10px; }
+      #input {
+        flex: 1; resize: none; height: 52px; padding: 10px 12px; border-radius: 8px;
+        border: 1px solid var(--line); background: #0b1017; color: var(--text); font: inherit;
+      }
+      #input:focus { outline: none; border-color: var(--accent); }
+      .ev { font-family: ui-monospace, monospace; font-size: 11.5px; padding: 3px 6px; border-left: 2px solid var(--line); margin-bottom: 3px; color: #9fb0c5; word-break: break-all; }
+      .ev b { color: var(--text); font-weight: 500; }
+      .ev.ok { border-left-color: var(--ok); }
+      .ev.warn { border-left-color: var(--warn); }
+      .ev.err { border-left-color: var(--err); color: #ffb4ae; }
+      .ev.accent { border-left-color: var(--accent); }
+      .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .row input { flex: 1; background: #0b1017; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 6px 8px; font: inherit; }
+      .hint { color: var(--muted); font-size: 12px; padding: 8px 2px; }
+      .pill { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); }
+      .pill.live { color: var(--ok); border-color: #2ea04366; }
+      .pill.off { color: var(--err); border-color: #f8514966; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Local Agent Runtime</h1>
+      <span class="meta" id="version">…</span>
+      <span class="spacer"></span>
+      <span class="pill" id="conn">连接中</span>
+      <span class="pill" id="state">idle</span>
+      <button id="new-session">新建会话</button>
+    </header>
+
+    <main>
+      <aside>
+        <div class="label">会话</div>
+        <div id="sessions"></div>
+      </aside>
+
+      <section id="chat">
+        <div class="hint">左侧选一个会话，或新建一个。消息会走真实模型与真实工具。</div>
+      </section>
+
+      <div id="events">
+        <div class="label">实时事件流</div>
+        <div id="eventlog"></div>
+      </div>
+    </main>
+
+    <div id="cards"></div>
+    <div id="banner" hidden></div>
+
+    <div id="composer">
+      <textarea id="input" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+      <button class="primary" id="send">发送</button>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let currentSession = null;
+      let offset = 0;
+      let streaming = null;
+      let thinking = null;
+      let streamAbort = null;
+      let streamToken = 0;
+      let renderToken = 0;
+      // User messages the server has not stored yet. A history re-sync must not
+      // drop them, otherwise the sent message silently disappears from the chat.
+      const unsent = [];
+
+      const el = (tag, cls, text) => {
+        const node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text !== undefined) node.textContent = text;
+        return node;
+      };
+
+      function showBanner(text) {
+        const banner = $('banner');
+        banner.textContent = text;
+        banner.hidden = false;
+      }
+
+      function hideBanner() {
+        $('banner').hidden = true;
+      }
+
+      function logEvent(event) {
+        const line = el('div', 'ev');
+        const name = el('b', null, event.type);
+        line.appendChild(name);
+        let detail = '';
+        if (event.type === 'tool.call.started' || event.type === 'tool.call.completed') detail = ' ' + (event.name || '');
+        if (event.type === 'permission.requested') detail = ' ' + (event.approval?.toolName || '') + ' — ' + (event.approval?.reason || '');
+        if (event.type === 'session.status') detail = ' ' + (event.status || '') + (event.reason ? ' — ' + event.reason : '');
+        if (event.type === 'message.delta') detail = ' ' + (event.text || '').slice(0, 60);
+        if (detail) line.appendChild(el('span', null, detail));
+        if (event.type === 'session.status' && event.status === 'completed') line.classList.add('ok');
+        if (event.type === 'session.status' && event.status === 'failed') line.classList.add('err');
+        if (event.type === 'permission.requested') line.classList.add('warn');
+        if (event.type === 'tool.call.started') line.classList.add('accent');
+        $('eventlog').prepend(line);
+        while ($('eventlog').childElementCount > 200) $('eventlog').lastChild.remove();
+      }
+
+      function setState(text, live) {
+        $('state').textContent = text;
+        $('state').className = live ? 'pill live' : 'pill';
+      }
+
+      function setConnection(text, ok) {
+        $('conn').textContent = text;
+        $('conn').className = ok ? 'pill live' : 'pill off';
+      }
+
+      function bubble(kind, who) {
+        const wrap = el('div', 'msg ' + kind);
+        wrap.appendChild(el('div', 'who', who));
+        const body = el('div', 'bubble');
+        wrap.appendChild(body);
+        $('chat').appendChild(wrap);
+        $('chat').scrollTop = $('chat').scrollHeight;
+        return body;
+      }
+
+      function messageText(message) {
+        let text = '';
+        for (const block of message.content || []) {
+          if (block.type === 'text') text += block.text;
+          if (block.type === 'tool_result') {
+            text += (text ? '\n' : '') + (block.content || []).map((c) => c.text || '').join('\n');
+          }
+          if (block.type === 'tool_use') text += (text ? '\n' : '') + '→ ' + block.name + ' ' + JSON.stringify(block.input);
+        }
+        return text;
+      }
+
+      function renderHistory(messages) {
+        $('chat').innerHTML = '';
+        for (const message of messages) {
+          const kind = message.role === 'user' ? 'user' : message.role === 'tool' ? 'tool' : 'assistant';
+          const body = bubble(kind, message.role);
+          body.textContent = messageText(message);
+        }
+        $('chat').scrollTop = $('chat').scrollHeight;
+      }
+
+      async function api(path, options) {
+        const response = await fetch(path, {
+          ...options,
+          headers: { 'content-type': 'application/json', ...(options?.headers || {}) },
+        });
+        const text = await response.text();
+        let body;
+        if (text) {
+          try {
+            body = JSON.parse(text);
+          } catch {
+            body = undefined;
+          }
+        }
+        if (!response.ok) {
+          const detail = body?.error?.message || body?.message || 'HTTP ' + response.status;
+          const error = new Error(detail);
+          error.status = response.status;
+          throw error;
+        }
+        return { status: response.status, body };
+      }
+
+      async function loadSessions() {
+        const result = await api('/v1/sessions');
+        const list = result.body?.sessions || [];
+        const box = $('sessions');
+        box.innerHTML = '';
+        for (const session of list) {
+          const item = el('div', 'session' + (session.id === currentSession ? ' active' : ''));
+          item.appendChild(el('div', null, session.title || '未命名会话'));
+          item.appendChild(el('div', 'id', session.id.slice(0, 12) + ' · ' + session.messageCount + ' 条'));
+          item.onclick = () => selectSession(session.id);
+          box.appendChild(item);
+        }
+        if (list.length === 0) box.appendChild(el('div', 'hint', '还没有会话'));
+        return list;
+      }
+
+      async function selectSession(id) {
+        const token = ++renderToken;
+        currentSession = id;
+        offset = 0;
+        streaming = null;
+        thinking = null;
+        unsent.length = 0;
+        $('cards').innerHTML = '';
+        const detail = await api('/v1/sessions/' + id);
+        if (token !== renderToken) return;
+        const history = await api('/v1/sessions/' + id + '/history');
+        if (token !== renderToken) return;
+        renderHistory(history.body?.messages || []);
+        await loadSessions();
+        // Resume from the current end of the log: replaying from zero would
+        // duplicate every past message into the chat.
+        connect(id, detail.body?.logOffset || 0);
+      }
+
+      /**
+       * Keep the event stream open. A dropped stream reconnects with a
+       * backoff instead of silently stopping every live update.
+       */
+      async function connect(sessionId, from) {
+        if (streamAbort) streamAbort.abort();
+        const token = ++streamToken;
+        offset = from;
+        let delay = 500;
+        for (;;) {
+          if (token !== streamToken) return;
+          const controller = new AbortController();
+          streamAbort = controller;
+          setConnection('连接中', false);
+          try {
+            const response = await fetch('/v1/sessions/' + sessionId + '/events?after=' + offset, {
+              signal: controller.signal,
+            });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            setConnection('已连接', true);
+            delay = 500;
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              for (;;) {
+                const cut = buffer.indexOf('\n\n');
+                if (cut < 0) break;
+                const block = buffer.slice(0, cut);
+                buffer = buffer.slice(cut + 2);
+                const line = block.split('\n').find((l) => l.startsWith('data: '));
+                if (!line) continue;
+                let event;
+                try { event = JSON.parse(line.slice(6)); } catch { continue; }
+                handleEvent(event);
+              }
+            }
+          } catch {
+            if (token !== streamToken) return;
+          }
+          if (token !== streamToken) return;
+          setConnection('已断开', false);
+          showBanner('事件流断开，正在重连…');
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          delay = Math.min(delay * 2, 5000);
+        }
+      }
+
+      async function syncHistory() {
+        const token = renderToken;
+        if (!currentSession) return;
+        try {
+          const history = await api('/v1/sessions/' + currentSession + '/history');
+          if (token !== renderToken) return;
+          const messages = history.body?.messages || [];
+          renderHistory(messages);
+          // Put back the messages the server has not stored yet.
+          for (let i = unsent.length - 1; i >= 0; i -= 1) {
+            const text = unsent[i];
+            const stored = messages.some(
+              (message) => message.role === 'user' && messageText(message).includes(text),
+            );
+            if (stored) {
+              unsent.splice(i, 1);
+              continue;
+            }
+            const body = bubble('user', 'user');
+            body.textContent = text;
+          }
+          // The message count in the sidebar is part of the session list.
+          await loadSessions();
+        } catch {
+          // A failed re-sync is not worth interrupting the user for.
+        }
+      }
+
+      function handleEvent(event) {
+        if (event.logOffset) offset = event.logOffset;
+        logEvent(event);
+
+        if (event.type === 'message.delta') {
+          if (!streaming) streaming = bubble('assistant', 'assistant');
+          streaming.textContent += event.text || '';
+          $('chat').scrollTop = $('chat').scrollHeight;
+        }
+        if (event.type === 'message.completed') {
+          streaming = null;
+          thinking = null;
+        }
+        if (event.type === 'thinking.delta') {
+          if (!thinking) thinking = bubble('thinking', 'thinking');
+          thinking.textContent += event.text || '';
+        }
+        if (event.type === 'tool.call.started') {
+          const body = bubble('tool', 'tool · ' + event.name);
+          body.textContent += JSON.stringify(event.input);
+        }
+        if (event.type === 'tool.call.completed') {
+          const body = bubble('tool', 'tool · ' + event.name + ' · 完成');
+          const result = event.result?.content || [];
+          body.textContent += result.map((c) => c.text || '').join('\n').slice(0, 4000);
+        }
+        if (event.type === 'tool.call.blocked') {
+          const body = bubble('tool', 'tool · ' + event.name + ' · 被拦截');
+          body.textContent += event.reason || '';
+        }
+        if (event.type === 'permission.requested') showApproval(event.approval);
+        if (event.type === 'question.requested') showQuestion(event.question);
+        if (event.type === 'session.status') {
+          setState(event.status, event.status === 'running');
+          if (event.status === 'completed') syncHistory();
+          if (event.status === 'failed') {
+            const reason = event.reason || event.error?.message || '未知错误';
+            showBanner('本轮失败：' + reason);
+          }
+        }
+      }
+
+      function showApproval(approval) {
+        if (!approval) return;
+        const card = el('div', 'card');
+        card.appendChild(el('h4', null, '需要批准：' + approval.toolName + '（风险 ' + approval.risk + '）'));
+        card.appendChild(el('div', null, approval.reason || ''));
+        card.appendChild(el('pre', null, JSON.stringify(approval.input)));
+        const actions = el('div', 'actions');
+        const choose = async (choice) => {
+          card.remove();
+          try {
+            await api('/v1/sessions/' + currentSession + '/permissions/' + approval.requestId, {
+              method: 'POST',
+              body: JSON.stringify({ choice }),
+            });
+            hideBanner();
+          } catch (error) {
+            showBanner('审批提交失败：' + error.message);
+          }
+        };
+        for (const [label, choice] of [['单次允许', 'allow-once'], ['本会话允许', 'allow-session'], ['拒绝', 'deny']]) {
+          const button = el('button', choice === 'deny' ? '' : 'primary', label);
+          button.onclick = () => choose(choice);
+          actions.appendChild(button);
+        }
+        card.appendChild(actions);
+        $('cards').appendChild(card);
+      }
+
+      function showQuestion(question) {
+        if (!question) return;
+        const card = el('div', 'card');
+        card.appendChild(el('h4', null, question.title));
+        const answers = {};
+        for (const item of question.questions) {
+          const row = el('div', 'row');
+          row.appendChild(el('span', null, item.question));
+          const input = el('input');
+          input.placeholder = '回答';
+          row.appendChild(input);
+          card.appendChild(row);
+          answers[item.id] = input;
+        }
+        const actions = el('div', 'actions');
+        const button = el('button', 'primary', '提交回答');
+        button.onclick = async () => {
+          const payload = {};
+          for (const [key, input] of Object.entries(answers)) payload[key] = input.value;
+          card.remove();
+          try {
+            await api('/v1/sessions/' + currentSession + '/questions/' + question.requestId, {
+              method: 'POST',
+              body: JSON.stringify({ answers: payload }),
+            });
+            hideBanner();
+          } catch (error) {
+            showBanner('提交回答失败：' + error.message);
+          }
+        };
+        actions.appendChild(button);
+        card.appendChild(actions);
+        $('cards').appendChild(card);
+      }
+
+      async function send() {
+        const input = $('input');
+        const text = input.value.trim();
+        if (!text) return;
+        try {
+          if (!currentSession) {
+            const created = await api('/v1/sessions', { method: 'POST', body: JSON.stringify({}) });
+            currentSession = created.body.session.id;
+            await loadSessions();
+            connect(currentSession, 0);
+          }
+          const body = bubble('user', 'user');
+          body.textContent = text;
+          input.value = '';
+          unsent.push(text);
+          const result = await api('/v1/sessions/' + currentSession + '/messages', {
+            method: 'POST',
+            body: JSON.stringify({ text }),
+          });
+          if (result.status >= 400) throw new Error('HTTP ' + result.status);
+          hideBanner();
+        } catch (error) {
+          const index = unsent.indexOf(text);
+          if (index >= 0) unsent.splice(index, 1);
+          // Drop the optimistic bubble and give the text back to the user.
+          const bubbles = $('chat').querySelectorAll('.msg.user');
+          for (let i = bubbles.length - 1; i >= 0; i -= 1) {
+            if (bubbles[i].textContent.includes(text)) {
+              bubbles[i].remove();
+              break;
+            }
+          }
+          input.value = text;
+          showBanner('发送失败：' + error.message);
+        }
+      }
+
+      $('send').onclick = send;
+      $('input').addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(); }
+      });
+      $('new-session').onclick = async () => {
+        try {
+          const created = await api('/v1/sessions', { method: 'POST', body: JSON.stringify({}) });
+          await selectSession(created.body.session.id);
+        } catch (error) {
+          showBanner('新建会话失败：' + error.message);
+        }
+      };
+
+      (async () => {
+        try {
+          const health = await api('/health');
+          $('version').textContent = health.body?.version ? 'v' + health.body.version : '';
+          const list = await loadSessions();
+          if (list.length > 0) await selectSession(list[0].id);
+          else setConnection('已连接', true);
+        } catch (error) {
+          showBanner('无法连接运行时：' + error.message);
+        }
+      })();
+    </script>
+  </body>
+</html>

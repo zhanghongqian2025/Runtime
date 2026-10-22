@@ -136,7 +136,7 @@ describe('end-to-end turn with tools', () => {
       defaultCwd: workspace,
       dataDir: mkdtempSync(join(tmpdir(), 'local-agent-e2e-')),
     });
-    const port = await server.listen();
+    const port = await server.listen(0);
     const baseUrl = `http://127.0.0.1:${port}`;
 
     const created = await fetchResilient(`${baseUrl}/v1/sessions`, {
