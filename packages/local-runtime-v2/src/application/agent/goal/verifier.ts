@@ -1,3 +1,4 @@
+import type { AgentMessage } from '@local-agent/protocol';
 import type { ToolBinder } from '@local-agent/agent-core/tools';
 import type { Logger, SessionStore, TurnSystem } from '@local-agent/local-runtime';
 import type { GoalSpec, GoalVerification } from './types.js';
@@ -33,8 +34,19 @@ export interface GoalVerifierOptions {
   readonly model: string;
 }
 
+/**
+ * The tools a verification session may use.
+ *
+ * It looks at the workspace, it never changes it. The set is deliberately
+ * short: every tool in it is either read-only or, in the case of `bash`,
+ * limited to the commands the permission policy proves safe. A tool that
+ * changes the workspace would end up asking the user inside a session
+ * nobody is watching, and the whole goal loop would stall there.
+ */
+export const VERIFIER_TOOL_NAMES: readonly string[] = ['read', 'grep', 'glob', 'bash'];
+
 /** The instruction the verifier session receives. */
-export function buildVerificationPrompt(spec: GoalSpec): string {
+export function buildVerificationPrompt(spec: GoalSpec, evidence?: string): string {
   const lines = [
     'You verify whether a goal is achieved. Work in the workspace: read the files, run the tests, look at the logs.',
     '',
@@ -55,6 +67,17 @@ export function buildVerificationPrompt(spec: GoalSpec): string {
     lines.push('When you must stop:', ...spec.stopConditions.map((entry) => `- ${entry}`), '');
   }
 
+  if (evidence !== undefined && evidence.length > 0) {
+    lines.push(
+      'The work that was done in the session you are verifying, with its evidence:',
+      '',
+      evidence,
+      '',
+      'Judge the evidence above first. Only look at the workspace yourself when the evidence does not settle a criterion.',
+      '',
+    );
+  }
+
   lines.push(
     'Check every acceptance criterion with real evidence.',
     'When you are done, call goal_verdict with:',
@@ -66,6 +89,51 @@ export function buildVerificationPrompt(spec: GoalSpec): string {
   );
 
   return lines.join('\n');
+}
+
+/**
+ * Render the recent work of the session being verified.
+ *
+ * The verifier judges in its own session, so it cannot see what the work
+ * produced. The evidence travels with the prompt instead of being read from
+ * the parent history.
+ */
+export function renderEvidence(
+  messages: readonly AgentMessage[],
+  options: {
+    readonly maxMessages?: number;
+    readonly maxChars?: number;
+    readonly maxResultChars?: number;
+  } = {},
+): string {
+  const maxMessages = options.maxMessages ?? 8;
+  const maxChars = options.maxChars ?? 400;
+  // A tool result carries the proof: the test output, the build log. It is
+  // worth more room than the prose around it.
+  const maxResultChars = options.maxResultChars ?? 2000;
+  const recent = messages.slice(-maxMessages);
+
+  return recent
+    .map((message) => {
+      const parts: string[] = [];
+      for (const block of message.content) {
+        if (block.type === 'text') parts.push(block.text.slice(0, maxChars));
+        if (block.type === 'tool_use') {
+          parts.push(`→ ${block.name} ${JSON.stringify(block.input).slice(0, maxChars)}`);
+        }
+        if (block.type === 'tool_result') {
+          const text = block.content
+            .map((entry) => (entry.type === 'text' ? entry.text : '[image]'))
+            .join('')
+            .slice(0, maxResultChars);
+          parts.push(`result${block.isError ? ' (error)' : ''}: ${text}`);
+        }
+      }
+      const text = parts.join(' | ');
+      return text.length === 0 ? undefined : `${message.role}: ${text}`;
+    })
+    .filter((line): line is string => line !== undefined)
+    .join('\n');
 }
 
 export function createGoalVerifier(options: GoalVerifierOptions): GoalVerifier {
@@ -83,14 +151,20 @@ export function createGoalVerifier(options: GoalVerifierOptions): GoalVerifier {
         providerId: parent?.providerId ?? options.providerId,
         model: parent?.model ?? options.model,
         title: 'verification',
+        // The verification session may look at the workspace, but it must
+        // never ask the user: a question here would stall the whole goal
+        // loop, and the question would land in a session nobody is watching.
+        permissionMode: 'auto',
       });
 
       created.push(child.id);
       options.registerVerifierSession(child.id);
 
+      const evidence = renderEvidence(options.sessions.readHistory(parentSessionId));
+
       const submitted = await options.turns.submit(
         child.id,
-        buildVerificationPrompt(spec),
+        buildVerificationPrompt(spec, evidence),
       );
       if (submitted.turnId === undefined) {
         return {

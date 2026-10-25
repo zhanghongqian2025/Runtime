@@ -437,7 +437,9 @@ export function createTurnSystem(options: TurnSystemOptions): TurnSystem {
               const decision = permission.decide({
                 toolName: context.toolName,
                 normalizedInput: call.input,
-                mode: options.config.config.permissionMode,
+                // A session may carry its own permission mode. The runtime
+                // configuration is the default, not the rule.
+                mode: session.permissionMode ?? options.config.config.permissionMode,
                 sessionRules: permission.listSessionRules(sessionId),
                 cwd: session.cwd,
               });
@@ -680,10 +682,15 @@ export function createTurnSystem(options: TurnSystemOptions): TurnSystem {
 
     acceptPlanEntry(sessionId: string): { turnId: string } {
       const turnId = newId('turn');
+      const timestamp = new Date().toISOString();
+      // The plan entry is the **mode switch**, not work: it is settled right
+      // away. A turn that stays "running" for ever is a lie in the turn log,
+      // and the recovery would keep reporting it as interrupted.
       options.sessions.appendTurn(sessionId, {
         turnId,
-        startedAt: new Date().toISOString(),
-        status: 'running',
+        startedAt: timestamp,
+        endedAt: timestamp,
+        status: 'completed',
         toolCalls: [],
       });
       return { turnId };

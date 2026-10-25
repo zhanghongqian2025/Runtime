@@ -109,6 +109,10 @@ open http://127.0.0.1:8787/
 #   zero-dependency static page: sessions, chat, live event stream, approvals
 #   ?panel=goal opens the goal and plan panel right away
 
+# 5d. drive one goal round against the running runtime and watch the verdict
+node scripts/goal-round.mjs
+#   sets a goal, answers the permission requests, reports the rounds and the verdict
+
 # 6. configure a provider: the file holds the variable NAME, the key stays
 #    in the environment
 mkdir -p ~/.config/local-agent
@@ -141,12 +145,7 @@ Environment overrides: `LOCAL_AGENT_HOST`, `LOCAL_AGENT_HTTP_PORT`, `LOCAL_AGENT
 | **M4** | Sessions: JSONL persistence, resume after a restart, fork, rewind, context compaction with checkpoints | ✅ done |
 | **M5** | Plan mode: mode switch with compensation, frozen review snapshot, fence, deferred queue | ✅ done |
 | **M6** | Goal mode: goal tools, state machine, token budget, automatic continuation, independent verifier | ✅ done |
-| **M1** | Minimal loop: one provider → user message → LLM call → text reply, SSE stream, CLI rendering | pending |
-| **M2** | Tools: read/write/edit/apply_patch/bash/grep/glob, cancellation, timeouts, output truncation, background bash | pending |
-| **M3** | Permissions: three modes, approval cards, blocked calls have no side effects | pending |
-| **M4** | Sessions: persist, resume, fork, rewind; context compaction with checkpoints | pending |
-| **M5** | Plan mode: mode switch, draft backup/compensation, frozen review snapshot, fence, queue deferral | pending |
-| **M6** | Goal mode: goal tools, state machine, token budget, auto-continue, independent verifier, block reports | pending |
+| **M7** | Web console: zero-dependency static page with the goal and plan panels | ✅ done |
 
 ## Requirements
 

@@ -61,11 +61,13 @@ describe('end-to-end goal mode', () => {
     application = undefined;
   });
 
-  const start = async (): Promise<{ baseUrl: string; sessionId: string }> => {
+  const start = async (
+    turns?: { readonly sse: string }[],
+  ): Promise<{ baseUrl: string; sessionId: string }> => {
     const dataDir = mkdtempSync(join(tmpdir(), 'local-agent-goal-e2e-'));
 
     const provider = createFakeProvider({
-      turns: [
+      turns: turns ?? [
         // Round 1 of the goal session: the agent sets the goal. Every tool
         // call is followed by another step, so each one needs a model turn.
         { sse: buildSse(toolCall(0, 'call_goal', 'create_goal', { text: GOAL_TEXT }), '[DONE]') },
@@ -96,7 +98,10 @@ describe('end-to-end goal mode', () => {
         config: {
           host: '127.0.0.1',
           httpPort: 0,
-          permissionMode: 'full-access',
+          // The ask mode, not full access: the goal loop has to work while
+          // every tool call needs a decision. The verification session may
+          // never ask for one (docs/contracts.md §10.5).
+          permissionMode: 'ask',
           providers: [],
           events: { retainCount: 2000 },
           tools: { maxResultBytes: 32768, maxCallBytes: 262144, maxLines: 2000 },
@@ -177,8 +182,159 @@ describe('end-to-end goal mode', () => {
     expect(goal?.blockedReport?.evidence[0]?.kind).toBe('test');
   });
 
-  it('refuses to let the verifier change the goal it verifies', async () => {
-    const { baseUrl, sessionId } = await start();
+  it('pauses a goal that makes no progress, and says why', async () => {
+    const { baseUrl, sessionId } = await start([
+      // Round 1 of the goal session: the goal is set.
+      { sse: buildSse(toolCall(0, 'call_goal', 'create_goal', { text: GOAL_TEXT }), '[DONE]') },
+      { sse: buildSse(text('the goal is set'), '[DONE]') },
+      // The verifier: not achieved, and no progress.
+      {
+        sse: buildSse(
+          toolCall(0, 'call_v1', 'goal_verdict', {
+            achieved: false,
+            progressed: false,
+            reason: 'the work did not change anything',
+            evidence: [],
+          }),
+          '[DONE]',
+        ),
+      },
+      { sse: buildSse(text('the verification found nothing'), '[DONE]') },
+      // Round 2 of the goal session: the automatic continuation.
+      { sse: buildSse(text('trying again'), '[DONE]') },
+      // The verifier again: still no progress. That is two rounds in a row.
+      {
+        sse: buildSse(
+          toolCall(0, 'call_v2', 'goal_verdict', {
+            achieved: false,
+            progressed: false,
+            reason: 'the work did not change anything either',
+            evidence: [],
+          }),
+          '[DONE]',
+        ),
+      },
+      { sse: buildSse(text('still nothing'), '[DONE]') },
+    ]);
+
+    await fetch(`${baseUrl}/v1/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'make the payment module use the new SDK' }),
+    });
+
+    let goal: { status: string; rounds: number; pauseReason?: string } | undefined;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/goal`);
+      if (response.status === 200) {
+        const body = (await response.json()) as { goal: typeof goal };
+        goal = body.goal;
+        if (goal?.status === 'paused') break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    expect(goal?.status).toBe('paused');
+    // The goal ran on its own before it gave up.
+    expect(goal?.rounds).toBeGreaterThanOrEqual(2);
+    // And it says why: without the reason the user would only see "paused".
+    expect(goal?.pauseReason).toContain('no progress');
+    expect(goal?.pauseReason).toContain('the work did not change anything either');
+  });
+
+  it('carries on by itself when the user resumes a paused goal', async () => {
+    const { baseUrl, sessionId } = await start([
+      // Round 1 of the goal session: the goal is set.
+      { sse: buildSse(toolCall(0, 'call_goal', 'create_goal', { text: GOAL_TEXT }), '[DONE]') },
+      { sse: buildSse(text('the goal is set'), '[DONE]') },
+      // The verifier: not achieved, and no progress.
+      {
+        sse: buildSse(
+          toolCall(0, 'call_v1', 'goal_verdict', {
+            achieved: false,
+            progressed: false,
+            reason: 'the work did not change anything',
+            evidence: [],
+          }),
+          '[DONE]',
+        ),
+      },
+      { sse: buildSse(text('the verification found nothing'), '[DONE]') },
+      // Round 2 of the goal session: the automatic continuation.
+      { sse: buildSse(text('trying again'), '[DONE]') },
+      // The verifier again: still no progress. The goal pauses.
+      {
+        sse: buildSse(
+          toolCall(0, 'call_v2', 'goal_verdict', {
+            achieved: false,
+            progressed: false,
+            reason: 'the work did not change anything either',
+            evidence: [],
+          }),
+          '[DONE]',
+        ),
+      },
+      { sse: buildSse(text('still nothing'), '[DONE]') },
+      // The user resumes the goal. The work has to carry on without another
+      // message from the user.
+      { sse: buildSse(text('carrying on after the resume'), '[DONE]') },
+      // And the verifier gets its verdict.
+      {
+        sse: buildSse(
+          toolCall(0, 'call_v3', 'goal_verdict', {
+            achieved: true,
+            progressed: true,
+            reason: 'the migration is done',
+            evidence: [],
+          }),
+          '[DONE]',
+        ),
+      },
+      { sse: buildSse(text('the goal is reached'), '[DONE]') },
+    ]);
+
+    await fetch(`${baseUrl}/v1/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'make the payment module use the new SDK' }),
+    });
+
+    const readGoal = async (): Promise<{ status: string; rounds: number } | undefined> => {
+      const response = await fetch(`${baseUrl}/v1/sessions/${sessionId}/goal`);
+      if (response.status !== 200) return undefined;
+      const body = (await response.json()) as { goal: { status: string; rounds: number } };
+      return body.goal;
+    };
+
+    // Wait for the pause.
+    let goal = await readGoal();
+    for (let attempt = 0; attempt < 100 && goal?.status !== 'paused'; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      goal = await readGoal();
+    }
+    expect(goal?.status).toBe('paused');
+    const roundsBeforeResume = goal?.rounds ?? 0;
+
+    // The user resumes it: the host asks the goal to carry on.
+    const resumed = await fetch(`${baseUrl}/v1/sessions/${sessionId}/goal`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'active' }),
+    });
+    expect(resumed.status).toBe(200);
+
+    // A new round runs without the user sending anything.
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      goal = await readGoal();
+      if (goal !== undefined && goal.rounds > roundsBeforeResume) break;
+    }
+
+    expect(goal?.rounds).toBeGreaterThan(roundsBeforeResume);
+    expect(goal?.status).toBe('completed');
+  });
+
+  it('refuses to let the verifier change the goal it verifies', async () => {    const { baseUrl, sessionId } = await start();
 
     await fetch(`${baseUrl}/v1/sessions/${sessionId}/messages`, {
       method: 'POST',

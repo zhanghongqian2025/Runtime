@@ -8,6 +8,7 @@
 export * from './artifacts.js';
 export * from './config/index.js';
 export * from './events/index.js';
+export * from './permissions/index.js';
 export * from './providers/index.js';
 export * from './sessions/index.js';
 export * from './tools/binder.js';

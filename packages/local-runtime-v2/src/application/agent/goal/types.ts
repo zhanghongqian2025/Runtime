@@ -68,6 +68,14 @@ export interface GoalState {
   readonly verifiedRounds: number;
   /** The report of a blocked goal. */
   readonly blockedReport?: GoalBlockReport | undefined;
+  /**
+   * Why the goal paused.
+   *
+   * The automatic pauses (the budget, the round limit, no progress, a wrong
+   * direction) are decisions the runtime takes on its own. Without this the
+   * user would only see "paused" and would have to guess what to change.
+   */
+  readonly pauseReason?: string | undefined;
 }
 
 /** What the goal service does after a turn ends. */

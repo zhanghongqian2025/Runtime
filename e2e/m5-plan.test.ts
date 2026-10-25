@@ -24,6 +24,19 @@ const quietLogger = {
 const text = (value: string): string =>
   `data: ${JSON.stringify({ choices: [{ delta: { content: value } }] })}\n\n`;
 
+const toolCall = (index: number, id: string, name: string, args: unknown): string =>
+  `data: ${JSON.stringify({
+    choices: [
+      {
+        delta: {
+          tool_calls: [
+            { index, id, type: 'function', function: { name, arguments: JSON.stringify(args) } },
+          ],
+        },
+      },
+    ],
+  })}\n\n`;
+
 interface HistoryEntry {
   readonly role: string;
   readonly content: { readonly type: string; text?: string }[];
@@ -46,7 +59,21 @@ describe('end-to-end plan mode', () => {
   const start = async (): Promise<{ baseUrl: string; dataDir: string; sessionId: string }> => {
     const dataDir = mkdtempSync(join(tmpdir(), 'local-agent-plan-e2e-'));
     const provider = createFakeProvider({
-      turns: [{ sse: buildSse(text('Implemented.'), '[DONE]') }],
+      turns: [
+        // The plan turn: the agent writes the draft with plan_write, then
+        // answers. Every tool call is followed by another step.
+        {
+          sse: buildSse(
+            toolCall(0, 'call_plan', 'plan_write', {
+              content: '# Plan\n\n1. the approved step\n',
+            }),
+            '[DONE]',
+          ),
+        },
+        { sse: buildSse(text('The plan is written.'), '[DONE]') },
+        // The implementation turn, after the user approved the plan.
+        { sse: buildSse(text('Implemented.'), '[DONE]') },
+      ],
     });
 
     application = createApplication({
@@ -96,9 +123,21 @@ describe('end-to-end plan mode', () => {
     const planBody = (await planState.json()) as { mode: string; blocked: boolean };
     expect(planBody.mode).toBe('plan');
 
-    // 2. The agent writes the draft.
+    // 2. The agent writes the draft: the message runs in the plan mode, and
+    //    the plan tools are the only ones it gets.
+    await fetch(`${baseUrl}/v1/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'write me a plan' }),
+    });
+
     const artifacts = createSessionArtifacts(sessionId, { dataDir });
-    await artifacts.write('artifacts/plan.md', '# Plan\n\n1. the approved step\n');
+    let draft = '';
+    for (let attempt = 0; attempt < 100 && draft.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      draft = (await artifacts.read('artifacts/plan.md')) ?? '';
+    }
+    expect(draft).toContain('the approved step');
 
     // 3. Leave the plan mode: the draft is frozen and the review is asked.
     const exited = await fetch(`${baseUrl}/v1/sessions/${sessionId}/mode`, {

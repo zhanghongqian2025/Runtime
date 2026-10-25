@@ -374,10 +374,10 @@ export function createPlanService(options: PlanServiceOptions): PlanService {
         return mode === 'plan' ? 'run' : 'cancel';
       }
 
-      if (mode === 'plan') {
-        return 'defer';
-      }
-
+      // In the plan mode an ordinary message **runs**: it is the request the
+      // agent plans. Only a pending review fences the queue. Holding the
+      // message back here would leave the plan mode with nothing to do: the
+      // draft is written by the agent, in answer to a message.
       return 'run';
     },
 

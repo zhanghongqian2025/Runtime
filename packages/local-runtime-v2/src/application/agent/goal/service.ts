@@ -56,7 +56,18 @@ export interface GoalService {
   readonly verifier: GoalVerifier;
   create(sessionId: string, input: CreateGoalInput): Promise<GoalState>;
   read(sessionId: string): GoalState | undefined;
-  update(sessionId: string, input: UpdateGoalInput): Promise<GoalState>;
+  /**
+   * Change the goal.
+   *
+   * `options.resume` starts a round right away. Only the host sets it: the
+   * user who resumes a paused goal expects the work to continue on its own.
+   * The model never does — it would nest a turn inside the turn it is in.
+   */
+  update(
+    sessionId: string,
+    input: UpdateGoalInput,
+    options?: { readonly resume?: boolean },
+  ): Promise<GoalState>;
   /** Called when a turn ended: it decides what happens next. */
   afterTurn(
     sessionId: string,
@@ -144,7 +155,11 @@ export function createGoalService(options: GoalServiceOptions): GoalService {
     return write(sessionId, goal);
   };
 
-  const update = async (sessionId: string, input: UpdateGoalInput): Promise<GoalState> => {
+  const update = async (
+    sessionId: string,
+    input: UpdateGoalInput,
+    behavior: { readonly resume?: boolean } = {},
+  ): Promise<GoalState> => {
     const goal = options.store.read(sessionId);
     if (goal === undefined) {
       throw new GoalError('NO_GOAL', 'this session has no goal');
@@ -187,7 +202,12 @@ export function createGoalService(options: GoalServiceOptions): GoalService {
       }
 
       if (input.status === 'cleared') {
-        next = { ...next, blockedReport: undefined };
+        next = { ...next, blockedReport: undefined, pauseReason: undefined };
+      }
+
+      // A goal that runs again has no reason to be paused any more.
+      if (input.status === 'active') {
+        next = { ...next, pauseReason: undefined };
       }
     }
 
@@ -199,7 +219,16 @@ export function createGoalService(options: GoalServiceOptions): GoalService {
       };
     }
 
-    return write(sessionId, next);
+    const written = await write(sessionId, next);
+
+    // Resuming a goal means "carry on", not "wait for the next message". The
+    // host asks for it; the model does not, because it would nest a turn
+    // inside the turn it is in.
+    if (behavior.resume === true && input.status === 'active') {
+      options.turns.continueTurn(sessionId);
+    }
+
+    return written;
   };
 
   // The tools ask the service, so a verifier session registered later is
@@ -238,29 +267,30 @@ export function createGoalService(options: GoalServiceOptions): GoalService {
 
     // 1. The budget stops the loop.
     if (budget.tokenLimit !== undefined && tokensUsed >= budget.tokenLimit) {
+      const reason = `the token budget of ${budget.tokenLimit} is exhausted (${tokensUsed} used)`;
       await write(sessionId, {
         ...goal,
         rounds,
         budget,
         status: 'paused',
+        pauseReason: reason,
         updatedAt: new Date().toISOString(),
       });
-      return {
-        kind: 'paused',
-        reason: `the token budget of ${budget.tokenLimit} is exhausted (${tokensUsed} used)`,
-      };
+      return { kind: 'paused', reason };
     }
 
     // 2. The backstop of the automatic continuation.
     if (rounds > MAX_GOAL_ROUNDS) {
+      const reason = `the goal exceeded ${MAX_GOAL_ROUNDS} rounds`;
       await write(sessionId, {
         ...goal,
         rounds,
         budget,
         status: 'paused',
+        pauseReason: reason,
         updatedAt: new Date().toISOString(),
       });
-      return { kind: 'paused', reason: `the goal exceeded ${MAX_GOAL_ROUNDS} rounds` };
+      return { kind: 'paused', reason };
     }
 
     // 3. The verification, in an independent sub-session.
@@ -284,30 +314,31 @@ export function createGoalService(options: GoalServiceOptions): GoalService {
     const consecutiveNoProgress = verdict.progressed ? 0 : goal.consecutiveNoProgress + 1;
 
     if (verdict.directionWrong) {
+      const reason = `the direction is wrong: ${verdict.reason}`;
       await write(sessionId, {
         ...goal,
         rounds,
         budget,
         consecutiveNoProgress,
         status: 'paused',
+        pauseReason: reason,
         updatedAt: new Date().toISOString(),
       });
-      return { kind: 'paused', reason: `the direction is wrong: ${verdict.reason}` };
+      return { kind: 'paused', reason };
     }
 
     if (consecutiveNoProgress >= MAX_ROUNDS_WITHOUT_PROGRESS) {
+      const reason = `no progress for ${consecutiveNoProgress} rounds in a row: ${verdict.reason}`;
       await write(sessionId, {
         ...goal,
         rounds,
         budget,
         consecutiveNoProgress,
         status: 'paused',
+        pauseReason: reason,
         updatedAt: new Date().toISOString(),
       });
-      return {
-        kind: 'paused',
-        reason: `no progress for ${consecutiveNoProgress} rounds in a row: ${verdict.reason}`,
-      };
+      return { kind: 'paused', reason };
     }
 
     // 4. Continue on the existing history: no hidden prompt is synthesised.

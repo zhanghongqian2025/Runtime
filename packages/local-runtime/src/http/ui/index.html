@@ -434,7 +434,10 @@
             (goal.stopConditions?.length ? '<div class="muted">停止条件</div>' + listHtml(goal.stopConditions) : '') +
             (goal.blockedReport === undefined
               ? ''
-              : '<div class="muted">阻塞报告</div><div>' + escapeHtml(goal.blockedReport.reason || '') + '</div>');
+              : '<div class="muted">阻塞报告</div><div>' + escapeHtml(goal.blockedReport.reason || '') + '</div>') +
+            (goal.pauseReason === undefined
+              ? ''
+              : '<div class="muted">暂停原因</div><div>' + escapeHtml(goal.pauseReason) + '</div>');
           actions.innerHTML = '';
           for (const [label, status] of [
             ['标记完成', 'completed'],
@@ -446,6 +449,9 @@
             const button = el('button', '', label);
             button.onclick = () => setGoalStatus(status);
             actions.appendChild(button);
+          }
+          if (goal.status === 'paused') {
+            actions.appendChild(el('span', 'muted', '恢复后会自己接着跑这一轮'));
           }
         } catch (error) {
           if (error.status === 404) {

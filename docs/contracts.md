@@ -610,8 +610,8 @@ providers:
 | GET | `/v1/sessions/{id}/todo` | 当前 todo 清单 |
 | GET | `/v1/sessions/{id}/goal` | 目标状态（无目标 → 404 `GOAL_NOT_FOUND`） |
 | POST | `/v1/sessions/{id}/goal` | 创建/更新目标（admission 事务） |
-| GET | `/v1/sessions/{id}/artifacts/{name}` | 读会话产物（如 `plan.md`） |
-| PUT | `/v1/sessions/{id}/artifacts/{name}` | 写会话产物（原子写） |
+| GET | `/v1/sessions/{id}/artifacts/{name}` | 读会话产物（如 `plan.md`）。`{name}` 是**会话内的相对路径**，带斜杠时用 URL 编码（`artifacts%2Fplan.md`） |
+| PUT | `/v1/sessions/{id}/artifacts/{name}` | 写会话产物（原子写）——**未实现**：产物由工具与服务写，客户端只读 |
 | POST | `/v1/sessions/{id}/mode` | `{ interactionMode: 'default'\|'plan' }`（admission 事务） |
 | POST | `/v1/sessions/{id}/plan/review` | `{ decision:'approve'\|'reject', feedback?, requestId }` |
 | POST | `/v1/sessions/{id}/permissions/{requestId}` | `{ choice }` 审批应答 |
@@ -627,6 +627,8 @@ providers:
 > - `POST /v1/sessions/{id}/rewind` —— `{ toMessageId? \| toTurnId?, resend }` → `202 { session, turnId }`；历史被截断，`resend` 由 turn system 追加（**只存一次**）。
 > - `GET /v1/sessions/{id}/status` 增加 `pendingApprovals` / `pendingQuestions`。
 > - 会话与事件**落盘**：重启后会话、历史、事件日志、turn 索引都在，SSE 仍可按 offset 续传。
+>
+> **会话自带权限档位**：会话可以带一个 `permissionMode`（`ask` / `auto` / `full-access`）。它**覆盖**运行时配置的档位，只对这个会话生效；没有这个字段的会话用配置里的档位。`GET /v1/sessions/{id}` 会把它返回给客户端。存在的理由是目标模式的 verifier 会话：它只能读，而且**永远不能问人**（§10.5）。
 > `POST /v1/sessions/{id}/messages` 返回 `202 { turnId, queued }`：`queued=1` 表示该会话已有 turn 在跑，本轮排队。
 > 未实现：`fork`、`rewind`（M4）、`/v1/sessions/{id}/mode` 与 `/plan/review`（M5）、`/v1/sessions/{id}/goal`（M6）。
 
@@ -881,7 +883,8 @@ export type InteractionMode = 'default' | 'plan';
 
 - 待确认的审阅**阻塞普通 turn 与队列项**。
 - 确认动作自身**按 `requestId` 精确排除**，不被自己的 fence 阻塞。
-- 计划模式激活时：普通消息可**入队**但被分类器判定为 `defer`（延后）；**计划入口项在模式外尚未执行时被取消**。
+- **计划模式下的普通消息照常运行**：那条消息就是「要规划什么」的请求，智能体拿收窄后的工具（`plan_write` + 只读工具）写出草稿。只有**待确认的审阅**才挡队列。
+- **计划入口项在模式外尚未执行时被取消**。
 - **幂等**：重复的 plan-exit 在已是 `default` 的会话上**幂等通过**（不报错、不重复备份）。
 
 ### 9.4 M5 落地的实现
@@ -961,12 +964,17 @@ export type InteractionMode = 'default' | 'plan';
   - **连续两轮无进展**；
   - 方向明显错误（verifier 判定为无效进展）。
 - 预算耗尽 → 明确提示 + 可提升后继续（`update_goal` 调整预算）。
+- **恢复即续跑**：宿主把目标改回 `active`（`POST /v1/sessions/{id}/goal` 带 `{status:'active'}`，可以同时带 `tokenBudget` 提预算）时，runtime **立刻自己开新一轮**，不需要用户再发一条消息。控制台目标面板的「恢复」按钮与 CLI 的 `local-agent goal status active` 都是这条路径。
+  - 只有**宿主**能触发恢复：模型自己调 `update_goal({status:'active'})` **不会**新开一轮——那会在当前回合里再套一个回合。模型恢复目标时，当前的回合结束后照常走自动续跑。
 
 ### 10.5 独立校验（verifier）
 
 - 验收由一个**独立的 verifier 子会话**执行（`parentSessionId` 指向目标会话，history 隔离）。
 - **子会话内禁止 `create_goal` / `update_goal`**（防止目标被自己改写）——调用直接被拒绝并返回 `GOAL_MUTATION_FORBIDDEN`。
 - verifier 结论**必须带证据**：测试结果、构建输出、日志、产物路径。
+- **verifier 会话永远不会问人**：它带着自己的权限档位 `auto`（§6.3），工具集只有 `read` / `grep` / `glob` / `bash`（外加目标工具）。于是每一步只有两种结局：低风险的读取被放行，其余（写操作、不能证明安全的命令）被**拒绝**——**没有"要人批"这一档**。这条不变量是自动续跑能一直走下去的前提：一次"要人批"会把这一轮挂在一个用户根本看不到的会话里，目标循环就停在那里，而且没有任何提示。
+- **证据随提示词一起过去**：verifier 在自己的会话里，看不到父会话做过什么。因此父会话最近的消息与工具结果会渲染成一段证据，放进校验提示词；校验优先依据证据判断，只有证据不足以定论时才自己去工作区看。
+- `bash` 在 verifier 会话里只能跑**权限策略判定为安全**的命令（白名单且无 shell 元字符）；`pnpm test` 这类项目命令不在白名单里，会被拒绝。验收要靠跑命令完成时，让被校验的会话先把命令跑掉，证据会随之带过去。
 
 ### 10.6 M6 落地的实现
 
@@ -1017,6 +1025,8 @@ export interface EvidenceRef {
   readonly detail?: string;
 }
 ```
+
+**暂停原因**：目标被运行时**自动暂停**时（预算用尽、轮次超限、连续两轮无进展、方向判定为错），目标状态里带一个 `pauseReason`（字符串），`GET /v1/sessions/{id}/goal` 会返回它，控制台的目标面板会显示它。没有它，用户只会看到 `paused`，得自己猜该改预算、改目标还是换方向。目标重新变成 `active` 或 `cleared` 时这个原因被清掉。
 
 ---
 

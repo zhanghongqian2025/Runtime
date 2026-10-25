@@ -203,10 +203,13 @@ describe('the fence and the queue classification', () => {
     ).toBe('run');
   });
 
-  it('defers the ordinary messages while the session is in the plan mode', async () => {
+  it('runs the ordinary messages while the session is in the plan mode', async () => {
     const h = harness();
     await h.service.enter(h.sessionId);
-    expect(h.service.classify({ kind: 'message', sessionId: h.sessionId, text: 'hi' })).toBe('defer');
+    // The message is the request the agent plans. Holding it back would
+    // leave the plan mode with nothing to do: the draft is written by the
+    // agent, in answer to a message.
+    expect(h.service.classify({ kind: 'message', sessionId: h.sessionId, text: 'hi' })).toBe('run');
     // The plan entry itself runs in the plan mode.
     expect(h.service.classify({ kind: 'plan-entry', sessionId: h.sessionId })).toBe('run');
   });

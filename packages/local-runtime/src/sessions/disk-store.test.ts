@@ -26,8 +26,29 @@ describe('the disk session store', () => {
     expect(existsSync(join(dataDir, 'sessions', session.id, 'meta.json'))).toBe(true);
   });
 
-  it('appends the history one line per message', () => {
+  it('keeps a permission mode that differs from the runtime default', () => {
     const dataDir = workspace();
+    const store = createDiskSessionStore({ dataDir });
+
+    const plain = store.create({ cwd: '/workspace', providerId: 'openai-compatible', model: 'm' });
+    expect(plain.permissionMode).toBeUndefined();
+
+    const verifier = store.create({
+      cwd: '/workspace',
+      providerId: 'openai-compatible',
+      model: 'm',
+      permissionMode: 'auto',
+    });
+    expect(verifier.permissionMode).toBe('auto');
+
+    // It survives a restart: the mode is part of the session, not of the
+    // process that happened to create it.
+    const reopened = createDiskSessionStore({ dataDir });
+    expect(reopened.get(verifier.id)?.permissionMode).toBe('auto');
+    expect(reopened.get(plain.id)?.permissionMode).toBeUndefined();
+  });
+
+  it('appends the history one line per message', () => {    const dataDir = workspace();
     const store = createDiskSessionStore({ dataDir });
     const session = store.create({ cwd: '/workspace', providerId: 'openai-compatible', model: 'm' });
 

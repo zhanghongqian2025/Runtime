@@ -17,6 +17,7 @@ import {
   createGoalService,
   createGoalStore,
   registerGoalRoutes,
+  VERIFIER_TOOL_NAMES,
   type GoalService,
 } from './application/agent/goal/index.js';
 import { createPlanService, registerPlanRoutes, type PlanService } from './service/plan/index.js';
@@ -77,9 +78,18 @@ export function createApplication(options: ApplicationOptions): Application {
 
   // The goal service needs the tools of a verification session, and those
   // tools include the goal tools: the holder breaks the cycle.
+  //
+  // A verification session only looks at the workspace. It must never write
+  // and it must never ask the user: the session runs in the `auto` mode, and
+  // a tool that changes the workspace would end up asking there, where
+  // nobody is watching. The goal tools stay in, because the verdict is
+  // written with one of them.
   const goalHolder: { service?: GoalService } = {};
   const toolsForVerifier = (): ReturnType<typeof createToolBinder> =>
-    createToolBinder([...LOCAL_TOOLS, ...(goalHolder.service?.tools ?? [])]);
+    createToolBinder([
+      ...LOCAL_TOOLS.filter((tool) => VERIFIER_TOOL_NAMES.includes(tool.definition.name)),
+      ...(goalHolder.service?.tools ?? []),
+    ]);
 
   const goal = createGoalService({
     sessions: server.services.sessions,

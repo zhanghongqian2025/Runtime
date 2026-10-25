@@ -159,6 +159,7 @@ export function createRuntimeServer(options: RuntimeServerOptions): RuntimeServe
     defaultCwd: options.defaultCwd ?? process.cwd(),
     defaultProviderId: firstProvider?.id ?? 'openai-compatible',
     defaultModel: firstProvider?.model ?? 'unknown',
+    dataDir,
   });
 
   const services: RuntimeServices = { sessions, events, turns, tools };

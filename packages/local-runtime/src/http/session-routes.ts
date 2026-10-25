@@ -1,5 +1,6 @@
 import type { RuntimeEvent } from '@local-agent/protocol';
 import { z } from 'zod';
+import { createSessionArtifacts } from '../artifacts.js';
 import type { EventDelivery } from '../events/types.js';
 import type { Logger } from '../logging/logger.js';
 import type { SessionStore } from '../sessions/types.js';
@@ -26,6 +27,8 @@ export interface SessionRouteDependencies {
   /** Provider and model used for new sessions. */
   readonly defaultProviderId: string;
   readonly defaultModel: string;
+  /** The runtime data directory that holds the sessions. */
+  readonly dataDir: string;
 }
 
 const parseAfter = (value: string | undefined): number => {
@@ -364,6 +367,30 @@ export function registerSessionRoutes(router: Router, deps: SessionRouteDependen
     for (const event of events.read(session.id, after)) {
       send(event);
     }
+  });
+
+  router.get('/v1/sessions/:sessionId/artifacts/:name', async ({ response, params }) => {
+    const session = sessions.get(params['sessionId'] ?? '');
+    if (!session) {
+      sendError(response, 404, 'NOT_FOUND', 'no session matches this id');
+      return;
+    }
+    // The name is the session-relative path of the artifact. A path with a
+    // slash travels URL-encoded (`artifacts%2Fplan.md`).
+    const name = params['name'] ?? '';
+    const artifacts = createSessionArtifacts(session.id, { dataDir: deps.dataDir });
+    let content: string | undefined;
+    try {
+      content = await artifacts.read(name);
+    } catch {
+      sendError(response, 400, 'BAD_REQUEST', 'the artifact path is not valid');
+      return;
+    }
+    if (content === undefined) {
+      sendError(response, 404, 'NOT_FOUND', 'the session has no such artifact');
+      return;
+    }
+    sendJson(response, 200, { name, content });
   });
 
   router.delete('/v1/sessions/:sessionId', ({ response, params }) => {

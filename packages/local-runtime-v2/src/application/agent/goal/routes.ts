@@ -60,6 +60,7 @@ export function registerGoalRoutes(router: Router, goal: GoalService): void {
         createdAt: state.createdAt,
         updatedAt: state.updatedAt,
         ...(state.blockedReport === undefined ? {} : { blockedReport: state.blockedReport }),
+        ...(state.pauseReason === undefined ? {} : { pauseReason: state.pauseReason }),
       },
     });
   });
@@ -93,7 +94,7 @@ export function registerGoalRoutes(router: Router, goal: GoalService): void {
         return;
       }
 
-      const updated = await goal.update(sessionId, parsed.data);
+      const updated = await goal.update(sessionId, parsed.data, { resume: true });
       sendJson(response, 200, { goal: { id: updated.id, status: updated.status } });
     } catch (error: unknown) {
       if (error instanceof GoalError) {

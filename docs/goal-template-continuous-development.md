@@ -102,6 +102,7 @@ curl -X POST http://127.0.0.1:8787/v1/sessions/<id>/goal \
 配套建议：
 
 - **token 预算**：`200000` 起步；一轮大约消耗几千到几万 token，预算太小会过早暂停。
+- **暂停了怎么办**：目标面板会写明**暂停原因**（预算用尽 / 连续两轮无进展 / 方向不对）。改完（提预算、改验收标准、换边界）后点「恢复」，**它会自己接着跑**，不用再发一条消息。
 - **先跑一轮看看节奏**：目标模式下每轮结束会由**独立 verifier 子会话**判定是否达成，
   连续两轮无进展自动暂停并给出结构化阻塞报告（已试过的路径、证据、还缺什么）。
 - **想清楚再动手**：目标模式会自动续跑，所以**边界和停止条件要写死**，
@@ -121,3 +122,42 @@ curl -X POST http://127.0.0.1:8787/v1/sessions/<id>/goal \
 
 也就是说：目标模式不是「让它写完一份报告」，而是**让它自己判断要不要继续干**。
 把验收标准写成可执行的命令，它才有判断的依据。
+
+## 四、先确认它是通的（推荐第一次这么做）
+
+仓库里有一个探针脚本，它对着**正在跑的运行时**走完整的一轮：设目标 → 发消息 →
+把审批请求答掉 → 看 verifier 的判定 → 打印轮次、用量与最终状态。
+
+```bash
+node packages/local-runtime-v2/dist/main.js          # 先把运行时跑起来
+node scripts/goal-round.mjs
+```
+
+正常输出长这样（真实模型实测）：
+
+```
+session            sess_x7d6p6dpnfunofohxvoik6j3dw
+goal set           201 {"goal":{"id":"req_…","status":"active"}}
+approval           req_… → 200
+round 0  status=active tokens=0/120000
+round 1  status=completed tokens=146/120000
+
+goal ended        status=completed
+```
+
+想让目标**达不成**、看看暂停与自动续跑长什么样，把目标换成一条不可能的验收：
+
+```bash
+GOAL_TEXT="目标: 让 LICENSE 的第 99 行存在
+验收: 出现一条包含第 99 行内容的 tool_result
+约束: 不修改任何文件
+边界: 只允许读 LICENSE
+停止条件: 读取失败" node scripts/goal-round.mjs
+```
+
+这时会看到 `round 0 → round 1 → round 2 status=paused`：连续两轮没有进展，
+目标自动暂停，并给出 `pauseReason`（控制台的目标面板里写着原因）。
+
+脚本会盯着**别的会话**有没有在等审批——verifier 会话一旦需要人批，
+就会打印 `STUCK`，那说明目标循环又被人卡住了（这曾经是个真 bug）。
+

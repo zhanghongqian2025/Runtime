@@ -69,6 +69,8 @@ interface StoredMeta {
   readonly providerId: string;
   readonly model: string;
   readonly forkedFrom?: string;
+  /** The permission mode of the session, when it differs from the runtime's. */
+  readonly permissionMode?: 'ask' | 'auto' | 'full-access' | undefined;
 }
 
 export function createDiskSessionStore(options: DiskSessionStoreOptions): SessionStore {
@@ -110,6 +112,7 @@ export function createDiskSessionStore(options: DiskSessionStoreOptions): Sessio
       : 'idle',
     providerId: meta.providerId,
     model: meta.model,
+    ...(meta.permissionMode === undefined ? {} : { permissionMode: meta.permissionMode }),
   });
 
   const historyFor = (sessionId: string): AgentMessage[] =>
@@ -148,6 +151,7 @@ export function createDiskSessionStore(options: DiskSessionStoreOptions): Sessio
         status: 'idle',
         providerId: input.providerId,
         model: input.model,
+        ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
       };
       const paths = pathsFor(meta.id);
       mkdirSync(paths.root, { recursive: true });

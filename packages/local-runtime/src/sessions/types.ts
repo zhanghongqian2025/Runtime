@@ -1,4 +1,4 @@
-import type { AgentMessage } from '@local-agent/protocol';
+import type { AgentMessage, PermissionMode } from '@local-agent/protocol';
 
 /**
  * Session contracts.
@@ -28,6 +28,15 @@ export interface Session {
   readonly status: SessionStatus;
   readonly providerId: string;
   readonly model: string;
+  /**
+   * The permission mode of this session.
+   *
+   * Undefined means "the mode of the runtime configuration". A session may
+   * carry its own mode when it must not behave like a normal one: the
+   * verification session of the goal mode, for example, may only read, and
+   * must never ask the user (docs/contracts.md §10.5).
+   */
+  readonly permissionMode?: PermissionMode | undefined;
 }
 
 export interface SessionView extends Session {
@@ -41,6 +50,8 @@ export interface CreateSessionInput {
   readonly cwd: string;
   readonly providerId: string;
   readonly model: string;
+  /** The permission mode of the session. Undefined means the runtime default. */
+  readonly permissionMode?: PermissionMode | undefined;
 }
 
 /** Where a fork starts from. */

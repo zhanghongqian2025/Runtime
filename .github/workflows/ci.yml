@@ -30,3 +30,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      # The transport check runs the built runtime against a local
+      # OpenAI-compatible server over a real socket and a real SSE stream. It
+      # needs no network and no key, so it belongs here: without it the
+      # provider adapters are only exercised by the fake provider.
+      - run: pnpm check:transport

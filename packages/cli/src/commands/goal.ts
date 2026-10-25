@@ -112,7 +112,11 @@ export async function runGoal(options: GoalOptions): Promise<GoalResult> {
         writeErr(body?.error?.message ?? `the goal could not be changed (HTTP ${result.status})`);
         return { exitCode: 1, sessionId };
       }
-      write(`the goal is now ${status}`);
+      write(
+        status === 'active'
+          ? 'the goal is now active: it carries on by itself'
+          : `the goal is now ${status}`,
+      );
       return { exitCode: 0, sessionId };
     }
 
